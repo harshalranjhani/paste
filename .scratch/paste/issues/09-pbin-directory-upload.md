@@ -4,15 +4,15 @@
 
 **Blocked by:** 05 — Multi-file tree paste; 08 — pbin stdin and file
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] Directory create produces one paste URL whose tree matches the uploaded relative paths
-- [ ] `.git/` is ignored; `.gitignore` and `.pasteignore` are honored when present
-- [ ] Symlinks are not followed/uploaded by default
-- [ ] Interactive runs show a file-count/bytes/expiry/visibility summary before upload
-- [ ] Sensitive-name warnings appear without blocking the upload
-- [ ] ZIP download from the resulting paste recreates the hierarchy
-- [ ] Limits and UTF-8/path rules still enforced server-side regardless of CLI claims
-- [ ] Covered by CLI-against-test-server tests
+- [x] Directory create produces one paste URL whose tree matches the uploaded relative paths
+- [x] `.git/` is ignored; `.gitignore` and `.pasteignore` are honored when present
+- [x] Symlinks are not followed/uploaded by default
+- [x] Interactive runs show a file-count/bytes/expiry/visibility summary before upload
+- [x] Sensitive-name warnings appear without blocking the upload
+- [x] ZIP download from the resulting paste recreates the hierarchy
+- [x] Limits and UTF-8/path rules still enforced server-side regardless of CLI claims
+- [x] Covered by CLI-against-test-server tests

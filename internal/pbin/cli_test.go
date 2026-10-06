@@ -1,6 +1,7 @@
 package pbin_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -183,6 +184,324 @@ func TestCreateJSONExpiresAndPasswordStdin(t *testing.T) {
 	rawBody := readBody(t, raw)
 	if raw.StatusCode == http.StatusOK && strings.Contains(rawBody, "top secret") {
 		t.Fatalf("raw exposed password-protected content without unlock")
+	}
+}
+
+func TestCreateDirectoryZIPRoundTripsHierarchy(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, jar, map[string]any{
+		"name":   "cli",
+		"scopes": []string{"paste:create", "paste:read", "paste:delete"},
+	})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# top\n")
+	mustWriteFile(t, filepath.Join(root, "src", "main.go"), "package main\n")
+	mustWriteFile(t, filepath.Join(root, "docs", "guide.txt"), "guide\n")
+
+	stdout, stderr, code := runPbin(t, configDir, "y\n", "create", root)
+	if code != 0 {
+		t.Fatalf("create dir exit = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	id := pasteIDFromURL(t, strings.TrimSpace(stdout))
+
+	zipRes, err := h.GET("/api/v1/pastes/" + id + "/archive.zip")
+	if err != nil {
+		t.Fatalf("GET zip: %v", err)
+	}
+	defer zipRes.Body.Close()
+	if zipRes.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(zipRes.Body)
+		t.Fatalf("zip status = %d; body = %q", zipRes.StatusCode, body)
+	}
+	zipBytes, err := io.ReadAll(zipRes.Body)
+	if err != nil {
+		t.Fatalf("read zip: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open entry: %v", err)
+		}
+		body, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read entry: %v", err)
+		}
+		got[f.Name] = string(body)
+	}
+	if got["README.md"] != "# top\n" {
+		t.Fatalf("README.md = %q", got["README.md"])
+	}
+	if got["src/main.go"] != "package main\n" {
+		t.Fatalf("src/main.go = %q", got["src/main.go"])
+	}
+	if got["docs/guide.txt"] != "guide\n" {
+		t.Fatalf("docs/guide.txt = %q", got["docs/guide.txt"])
+	}
+}
+
+func TestCreateDirectoryWarnsOnSensitiveNamesWithoutBlocking(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, jar, map[string]any{
+		"name":   "cli",
+		"scopes": []string{"paste:create", "paste:read", "paste:delete"},
+	})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, ".env"), "SECRET=1\n")
+	mustWriteFile(t, filepath.Join(root, "id_rsa"), "-----BEGIN\n")
+	mustWriteFile(t, filepath.Join(root, "certs", "server.pem"), "pem\n")
+	mustWriteFile(t, filepath.Join(root, "ok.txt"), "fine\n")
+
+	stdout, stderr, code := runPbin(t, configDir, "y\n", "create", root)
+	if code != 0 {
+		t.Fatalf("create dir exit = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, needle := range []string{".env", "id_rsa", "server.pem"} {
+		if !strings.Contains(stderr, needle) {
+			t.Fatalf("expected sensitive warning mentioning %q; stderr=%q", needle, stderr)
+		}
+	}
+	id := pasteIDFromURL(t, strings.TrimSpace(stdout))
+	metaRes, err := h.GET("/api/v1/pastes/" + id + "/meta")
+	if err != nil {
+		t.Fatalf("GET meta: %v", err)
+	}
+	metaBody := readBody(t, metaRes)
+	for _, want := range []string{".env", "id_rsa", "certs/server.pem", "ok.txt"} {
+		if !strings.Contains(metaBody, `"`+want+`"`) && !strings.Contains(metaBody, want) {
+			t.Fatalf("sensitive file %q was blocked; body = %q", want, metaBody)
+		}
+	}
+}
+
+func TestCreateDirectoryShowsSummaryAndCanAbort(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, jar, map[string]any{
+		"name":   "cli",
+		"scopes": []string{"paste:create", "paste:read", "paste:delete"},
+	})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "aaa\n")
+	mustWriteFile(t, filepath.Join(root, "b.txt"), "bbbb\n")
+
+	stdout, stderr, code := runPbin(t, configDir, "n\n", "create", root, "--expires", "7d")
+	if code == 0 {
+		t.Fatalf("abort should be non-zero; stdout=%q stderr=%q", stdout, stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("abort must not print URL; stdout=%q", stdout)
+	}
+	for _, needle := range []string{"2 files", "9 bytes", "7d", "unlisted"} {
+		if !strings.Contains(stderr, needle) {
+			t.Fatalf("summary missing %q; stderr=%q", needle, stderr)
+		}
+	}
+
+	stdout, stderr, code = runPbin(t, configDir, "y\n", "create", root, "--expires", "7d")
+	if code != 0 {
+		t.Fatalf("confirm create exit = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	pasteURL := strings.TrimSpace(stdout)
+	if !strings.Contains(pasteURL, "/p/") {
+		t.Fatalf("expected paste URL; stdout=%q stderr=%q", stdout, stderr)
+	}
+	assertPasteContains(t, h, pasteURL, "aaa")
+}
+
+func TestCreateDirectorySkipsSymlinks(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, jar, map[string]any{
+		"name":   "cli",
+		"scopes": []string{"paste:create", "paste:read", "paste:delete"},
+	})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "real.txt"), "real\n")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	mustWriteFile(t, outside, "escaped\n")
+	if err := os.Symlink(outside, filepath.Join(root, "link.txt")); err != nil {
+		t.Fatalf("symlink file: %v", err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "linkdir")); err != nil {
+		t.Fatalf("symlink dir: %v", err)
+	}
+
+	stdout, stderr, code := runPbin(t, configDir, "y\n", "create", root)
+	if code != 0 {
+		t.Fatalf("create dir exit = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	id := pasteIDFromURL(t, strings.TrimSpace(stdout))
+
+	metaRes, err := h.GET("/api/v1/pastes/" + id + "/meta")
+	if err != nil {
+		t.Fatalf("GET meta: %v", err)
+	}
+	metaBody := readBody(t, metaRes)
+	var meta struct {
+		Files []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(metaBody), &meta); err != nil {
+		t.Fatalf("parse meta: %v; body = %q", err, metaBody)
+	}
+	byPath := map[string]bool{}
+	for _, f := range meta.Files {
+		byPath[f.Path] = true
+	}
+	if !byPath["real.txt"] {
+		t.Fatalf("expected real.txt; body = %q", metaBody)
+	}
+	if byPath["link.txt"] {
+		t.Fatalf("symlink file was uploaded; body = %q", metaBody)
+	}
+	if strings.Contains(metaBody, "escaped") {
+		t.Fatalf("symlink target content leaked into meta; body = %q", metaBody)
+	}
+}
+
+func TestCreateDirectoryHonorsIgnoreRules(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, jar, map[string]any{
+		"name":   "cli",
+		"scopes": []string{"paste:create", "paste:read", "paste:delete"},
+	})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "keep.txt"), "keep\n")
+	mustWriteFile(t, filepath.Join(root, "build", "out.txt"), "built\n")
+	mustWriteFile(t, filepath.Join(root, "secret.local"), "secret\n")
+	mustWriteFile(t, filepath.Join(root, ".git", "config"), "gitmeta\n")
+	mustWriteFile(t, filepath.Join(root, ".gitignore"), "build/\n")
+	mustWriteFile(t, filepath.Join(root, ".pasteignore"), "*.local\n")
+
+	stdout, stderr, code := runPbin(t, configDir, "y\n", "create", root)
+	if code != 0 {
+		t.Fatalf("create dir exit = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	id := pasteIDFromURL(t, strings.TrimSpace(stdout))
+
+	metaRes, err := h.GET("/api/v1/pastes/" + id + "/meta")
+	if err != nil {
+		t.Fatalf("GET meta: %v", err)
+	}
+	metaBody := readBody(t, metaRes)
+	if metaRes.StatusCode != http.StatusOK {
+		t.Fatalf("meta status = %d; body = %q", metaRes.StatusCode, metaBody)
+	}
+	var meta struct {
+		Files []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(metaBody), &meta); err != nil {
+		t.Fatalf("parse meta: %v; body = %q", err, metaBody)
+	}
+	byPath := map[string]bool{}
+	for _, f := range meta.Files {
+		byPath[f.Path] = true
+	}
+	if !byPath["keep.txt"] {
+		t.Fatalf("expected keep.txt; body = %q", metaBody)
+	}
+	for _, banned := range []string{"build/out.txt", "secret.local", ".git/config"} {
+		if byPath[banned] {
+			t.Fatalf("unexpected path %q uploaded; body = %q", banned, metaBody)
+		}
+	}
+}
+
+func TestCreateDirectoryUploadsNestedPathsAsOnePaste(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, jar, map[string]any{
+		"name":   "cli",
+		"scopes": []string{"paste:create", "paste:read", "paste:delete"},
+	})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# hello\n")
+	mustWriteFile(t, filepath.Join(root, "src", "main.go"), "package main\n")
+	mustWriteFile(t, filepath.Join(root, "src", "util", "helper.go"), "package util\n")
+
+	stdout, stderr, code := runPbin(t, configDir, "y\n", "create", root)
+	if code != 0 {
+		t.Fatalf("create dir exit = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	pasteURL := strings.TrimSpace(stdout)
+	if pasteURL == "" || strings.Contains(pasteURL, "\n") {
+		t.Fatalf("stdout must be a single URL line; got %q", stdout)
+	}
+	id := pasteIDFromURL(t, pasteURL)
+
+	metaRes, err := h.GET("/api/v1/pastes/" + id + "/meta")
+	if err != nil {
+		t.Fatalf("GET meta: %v", err)
+	}
+	metaBody := readBody(t, metaRes)
+	if metaRes.StatusCode != http.StatusOK {
+		t.Fatalf("meta status = %d; body = %q", metaRes.StatusCode, metaBody)
+	}
+	var meta struct {
+		Files []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(metaBody), &meta); err != nil {
+		t.Fatalf("parse meta: %v; body = %q", err, metaBody)
+	}
+	byPath := map[string]bool{}
+	for _, f := range meta.Files {
+		byPath[f.Path] = true
+	}
+	for _, want := range []string{"README.md", "src/main.go", "src/util/helper.go"} {
+		if !byPath[want] {
+			t.Fatalf("missing path %q in meta; body = %q", want, metaBody)
+		}
+	}
+	if len(meta.Files) != 3 {
+		t.Fatalf("meta files = %d, want 3; body = %q", len(meta.Files), metaBody)
+	}
+}
+
+func mustWriteFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
