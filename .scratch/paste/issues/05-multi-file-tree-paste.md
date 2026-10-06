@@ -4,16 +4,16 @@
 
 **Blocked by:** 03 — Single-file unlisted paste; 04 — Password-protected paste
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] Authenticated multi-file/bundle create preserves nested POSIX-relative paths under one URL
-- [ ] Failed mid-upload leaves no partial paste
-- [ ] Duplicate/traversal/absolute/Windows/UNC/NUL/over-depth paths are rejected
-- [ ] Tree viewer loads metadata first, then selected file bodies; single-file layout still omits empty tree
-- [ ] Keyboard navigation and basic tree ARIA work; mobile uses drawer/compact picker
-- [ ] ZIP streams a safe archive with correct hierarchy; password gate applies
-- [ ] Size/file-count limits enforced while reading the request (authenticated defaults from spec)
-- [ ] Unauthenticated bundle/multi-file create is rejected
-- [ ] Covered by HTTP-seam tests including path attack matrix and ZIP safety
+- [x] Authenticated multi-file/bundle create preserves nested POSIX-relative paths under one URL
+- [x] Failed mid-upload leaves no partial paste
+- [x] Duplicate/traversal/absolute/Windows/UNC/NUL/over-depth paths are rejected
+- [x] Tree viewer loads metadata first, then selected file bodies; single-file layout still omits empty tree
+- [x] Keyboard navigation and basic tree ARIA work; mobile uses drawer/compact picker
+- [x] ZIP streams a safe archive with correct hierarchy; password gate applies
+- [x] Size/file-count limits enforced while reading the request (authenticated defaults from spec)
+- [x] Unauthenticated bundle/multi-file create is rejected
+- [x] Covered by HTTP-seam tests including path attack matrix and ZIP safety

@@ -7,6 +7,7 @@ import (
 	stdlibhtml "html"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,8 +16,6 @@ import (
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
-
-	"github.com/harshalranjhani/paste/internal/auth"
 )
 
 const (
@@ -186,12 +185,26 @@ func (s *Server) handleNewPasteForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>New paste</title></head><body>
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
+<title>New paste</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:1.5rem;max-width:48rem}
+label{display:block;margin:0.75rem 0}
+.file-row{border:1px solid #ccc;padding:0.75rem;margin:0.75rem 0}
+button{font:inherit}
+</style>
+</head><body>
 <h1>New paste</h1>
-<form method="post" action="/new">
+<form method="post" action="/new" id="paste-form">
 <input type="hidden" name="csrf" value="` + stdlibhtml.EscapeString(sess.CSRFToken) + `">
-<label>Filename <input name="filename" value="paste.txt" required></label>
-<label>Content <textarea name="content" rows="20" cols="80" required></textarea></label>
+<div id="files">
+<div class="file-row">
+<label>Path <input name="path" value="paste.txt" required></label>
+<label>Content <textarea name="content" rows="12" cols="80" required></textarea></label>
+</div>
+</div>
+<p><button type="button" id="add-file">Add file</button></p>
 <label>Expires in
 <select name="expires_in">
 <option value="90d" selected>90 days</option>
@@ -201,9 +214,18 @@ func (s *Server) handleNewPasteForm(w http.ResponseWriter, r *http.Request) {
 </select>
 </label>
 <label>Password (optional) <input type="password" name="password" autocomplete="new-password"></label>
-<p>Unlisted: anyone with the link can view. Not indexed or listed publicly.</p>
+<p>Unlisted: anyone with the link can view. Not indexed or listed publicly. Add multiple files with relative paths (no directory picker required).</p>
 <button type="submit">Create</button>
 </form>
+<script>
+document.getElementById('add-file').addEventListener('click',function(){
+  var row=document.createElement('div');
+  row.className='file-row';
+  row.innerHTML='<label>Path <input name="path" required></label><label>Content <textarea name="content" rows="8" cols="80" required></textarea></label><button type="button" class="remove-file">Remove</button>';
+  row.querySelector('.remove-file').addEventListener('click',function(){ row.remove(); });
+  document.getElementById('files').appendChild(row);
+});
+</script>
 </body></html>`))
 }
 
@@ -225,25 +247,70 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	filename := strings.TrimSpace(r.FormValue("filename"))
-	content := r.FormValue("content")
 	expiresIn := strings.TrimSpace(r.FormValue("expires_in"))
 	password := r.FormValue("password")
-	if filename == "" {
-		filename = "paste.txt"
+
+	paths := r.Form["path"]
+	contents := r.Form["content"]
+	// Backward compatible single-file field names.
+	if len(paths) == 0 {
+		if filename := strings.TrimSpace(r.FormValue("filename")); filename != "" {
+			paths = []string{filename}
+			contents = []string{r.FormValue("content")}
+		}
 	}
-	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") || filename == ".." || filename == "." {
-		http.Error(w, "invalid filename", http.StatusBadRequest)
+	if len(paths) == 0 {
+		http.Error(w, "at least one file is required", http.StatusBadRequest)
 		return
 	}
-	if !utf8.ValidString(content) {
-		http.Error(w, "content must be valid UTF-8 text", http.StatusBadRequest)
+	if len(contents) != len(paths) {
+		http.Error(w, "path and content counts must match", http.StatusBadRequest)
 		return
 	}
-	if len(content) > maxFileBytes {
-		http.Error(w, "content too large", http.StatusBadRequest)
+	if len(paths) > maxFilesPerPaste {
+		http.Error(w, "too many files", http.StatusBadRequest)
 		return
 	}
+
+	files := make([]pasteFileInput, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	totalBytes := 0
+	for i, rawPath := range paths {
+		content := contents[i]
+		normalized, err := normalizePastePath(strings.TrimSpace(rawPath))
+		if err != nil {
+			// Single-segment filenames without slash are allowed (legacy).
+			filename := strings.TrimSpace(rawPath)
+			if filename == "" {
+				filename = "paste.txt"
+			}
+			if strings.Contains(filename, "/") || strings.Contains(filename, "\\") || filename == ".." || filename == "." {
+				http.Error(w, "invalid path", http.StatusBadRequest)
+				return
+			}
+			normalized = filename
+		}
+		if _, dup := seen[normalized]; dup {
+			http.Error(w, "duplicate path", http.StatusBadRequest)
+			return
+		}
+		seen[normalized] = struct{}{}
+		if !utf8.ValidString(content) {
+			http.Error(w, "content must be valid UTF-8 text", http.StatusBadRequest)
+			return
+		}
+		if len(content) > maxFileBytes {
+			http.Error(w, "content too large", http.StatusBadRequest)
+			return
+		}
+		totalBytes += len(content)
+		if totalBytes > maxPasteBytes {
+			http.Error(w, "paste too large", http.StatusBadRequest)
+			return
+		}
+		files = append(files, pasteFileInput{Path: normalized, Content: content})
+	}
+
 	ttl := defaultPasteTTL
 	if expiresIn != "" {
 		parsed, err := parseDurationDays(expiresIn)
@@ -261,7 +328,7 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		ttl = parsed
 	}
-	publicID, err := s.insertPaste(r, sess.UserID, filename, content, "", password, ttl)
+	publicID, err := s.insertPasteFiles(r, sess.UserID, "", password, ttl, files)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -270,51 +337,9 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, title, password string, ttl time.Duration) (string, error) {
-	expiresAt := time.Now().UTC().Add(ttl)
-	publicID, err := newPublicID()
-	if err != nil {
-		return "", err
-	}
-	size := len(content)
-	protectionMode := "open"
-	var passwordHash any
-	if password != "" {
-		hash, err := auth.HashPassword(password)
-		if err != nil {
-			return "", err
-		}
-		protectionMode = "password"
-		passwordHash = hash
-	}
-	tx, err := s.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	res, err := tx.ExecContext(r.Context(), `
-INSERT INTO pastes (public_id, owner_user_id, title, protection_mode, password_hash, expires_at, total_files, total_bytes)
-VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-		publicID, ownerID, nullIfEmpty(title), protectionMode, passwordHash, expiresAt.Format(time.RFC3339Nano), size,
-	)
-	if err != nil {
-		return "", err
-	}
-	pasteID, err := res.LastInsertId()
-	if err != nil {
-		return "", err
-	}
-	if _, err := tx.ExecContext(r.Context(), `
-INSERT INTO paste_files (paste_id, path, display_name, mime_type, size_bytes, content)
-VALUES (?, ?, ?, 'text/plain; charset=utf-8', ?, ?)`,
-		pasteID, filename, filename, size, content,
-	); err != nil {
-		return "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return publicID, nil
+	return s.insertPasteFiles(r, ownerID, title, password, ttl, []pasteFileInput{
+		{Path: filename, Content: content},
+	})
 }
 
 func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
@@ -331,14 +356,43 @@ func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
 		s.writePasteLockScreen(w, publicID, "", http.StatusOK)
 		return
 	}
-	file, ok := s.loadPasteFileBody(w, r, paste.ID)
+	files, ok := s.loadPasteFileList(w, r, paste.ID)
 	if !ok {
+		return
+	}
+
+	// Fragment for lazy tree pane highlighting.
+	if r.URL.Query().Get("partial") == "1" {
+		fileID, err := strconv.ParseInt(r.URL.Query().Get("file_id"), 10, 64)
+		if err != nil || fileID <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		file, ok := s.loadPasteFileByID(w, r, paste.ID, fileID)
+		if !ok {
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
+		_, _ = w.Write([]byte(highlightCode(file.Path, file.Content)))
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 
+	if len(files) == 1 {
+		file, ok := s.loadPasteFileByID(w, r, paste.ID, files[0].ID)
+		if !ok {
+			return
+		}
+		s.writeSingleFileViewer(w, publicID, file)
+		return
+	}
+	s.writeTreeViewer(w, publicID, files)
+}
+
+func (s *Server) writeSingleFileViewer(w http.ResponseWriter, publicID string, file *pasteFileRow) {
 	highlighted := highlightCode(file.Path, file.Content)
 	pasteURL := s.cfg.BaseURL + "/p/" + publicID
 	rawURL := pasteURL + "/raw"
@@ -357,6 +411,7 @@ h1{font-size:1rem;font-weight:600}
 <h1>` + stdlibhtml.EscapeString(file.Path) + `</h1>
 <p class="actions">
 <a href="` + stdlibhtml.EscapeString(rawURL) + `">Raw</a>
+<a href="` + stdlibhtml.EscapeString(pasteURL+"/archive.zip") + `">ZIP</a>
 <button type="button" id="copy-url" data-url="` + stdlibhtml.EscapeString(pasteURL) + `">Copy URL</button>
 <button type="button" id="copy-contents">Copy contents</button>
 </p>
@@ -369,6 +424,161 @@ document.getElementById('copy-contents').addEventListener('click',function(){
   var el=document.getElementById('paste-content');
   navigator.clipboard.writeText(el?el.innerText:'');
 });
+</script>
+</body></html>`))
+}
+
+func (s *Server) writeTreeViewer(w http.ResponseWriter, publicID string, files []pasteFileMeta) {
+	pasteURL := s.cfg.BaseURL + "/p/" + publicID
+	apiBase := "/api/v1/pastes/" + publicID
+	viewBase := "/p/" + publicID
+
+	var treeItems strings.Builder
+	for i, f := range files {
+		attrs := ` aria-selected="false" class="tree-item" tabindex="-1"`
+		if i == 0 {
+			attrs = ` aria-selected="true" class="tree-item selected" tabindex="0"`
+		}
+		treeItems.WriteString(`<li role="treeitem"` + attrs +
+			` data-file-id="` + strconv.FormatInt(f.ID, 10) +
+			`" data-path="` + stdlibhtml.EscapeString(f.Path) + `">` +
+			stdlibhtml.EscapeString(f.Path) + `</li>`)
+	}
+
+	firstID := strconv.FormatInt(files[0].ID, 10)
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
+<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paste ` + stdlibhtml.EscapeString(publicID) + `</title>
+<style>
+:root{color-scheme:light dark}
+body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:0;min-height:100vh}
+.layout{display:grid;grid-template-columns:minmax(12rem,18rem) 1fr;min-height:100vh}
+.sidebar{border-right:1px solid #ccc;padding:0.75rem;background:#f6f8fa}
+@media (prefers-color-scheme:dark){.sidebar{background:#1a1a1a;border-color:#333}}
+.sidebar h1{font-size:0.875rem;margin:0 0 0.75rem}
+#file-tree{list-style:none;margin:0;padding:0}
+.tree-item{padding:0.35rem 0.5rem;cursor:pointer;border-radius:0.25rem}
+.tree-item:hover,.tree-item:focus{outline:2px solid #0969da;outline-offset:-2px}
+.tree-item.selected{background:#ddf4ff}
+@media (prefers-color-scheme:dark){.tree-item.selected{background:#1f3a5f}}
+.main{padding:1rem;min-width:0}
+.actions{display:flex;flex-wrap:wrap;gap:0.75rem;margin:0 0 0.75rem;font-size:0.875rem}
+.chroma{overflow:auto;padding:1rem;background:#f6f8fa}
+.chroma .line{display:flex}
+.chroma .ln{user-select:none;min-width:3ch;padding-right:1rem;text-align:right;opacity:.5}
+.drawer-toggle{display:none}
+.file-picker{display:none;width:100%;margin-bottom:0.75rem;font:inherit}
+@media (max-width:720px){
+  .layout{grid-template-columns:1fr}
+  .sidebar{display:none;position:fixed;inset:0 auto 0 0;width:min(80vw,18rem);z-index:10;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
+  .sidebar.open{display:block}
+  .drawer-toggle{display:inline-block}
+  .file-picker{display:block}
+}
+</style>
+</head><body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+<h1>Files</h1>
+<ul id="file-tree" role="tree" aria-label="Paste files">` + treeItems.String() + `</ul>
+</aside>
+<main class="main">
+<p class="actions">
+<button type="button" class="drawer-toggle" id="drawer-toggle" aria-controls="sidebar" aria-expanded="false">Files</button>
+<select class="file-picker" id="file-picker" aria-label="Select file"></select>
+<a id="raw-link" href="#">Raw</a>
+<a href="` + stdlibhtml.EscapeString(pasteURL+"/archive.zip") + `">ZIP</a>
+<button type="button" id="copy-url" data-url="` + stdlibhtml.EscapeString(pasteURL) + `">Copy URL</button>
+<button type="button" id="copy-contents">Copy contents</button>
+</p>
+<div id="code-pane"><p>Loading…</p></div>
+</main>
+</div>
+<script>
+(function(){
+  var apiBase=` + strconv.Quote(apiBase) + `;
+  var viewBase=` + strconv.Quote(viewBase) + `;
+  var items=[].slice.call(document.querySelectorAll('#file-tree [role="treeitem"]'));
+  var pane=document.getElementById('code-pane');
+  var rawLink=document.getElementById('raw-link');
+  var picker=document.getElementById('file-picker');
+  var drawer=document.getElementById('drawer-toggle');
+  var sidebar=document.getElementById('sidebar');
+
+  items.forEach(function(el){
+    var opt=document.createElement('option');
+    opt.value=el.getAttribute('data-file-id');
+    opt.textContent=el.getAttribute('data-path');
+    picker.appendChild(opt);
+  });
+
+  function selectItem(el){
+    if(!el) return;
+    items.forEach(function(i){
+      i.classList.remove('selected');
+      i.setAttribute('aria-selected','false');
+      i.tabIndex=-1;
+    });
+    el.classList.add('selected');
+    el.setAttribute('aria-selected','true');
+    el.tabIndex=0;
+    el.focus();
+    picker.value=el.getAttribute('data-file-id');
+    loadFile(el.getAttribute('data-file-id'));
+    sidebar.classList.remove('open');
+    drawer.setAttribute('aria-expanded','false');
+  }
+
+  function loadFile(id){
+    pane.innerHTML='<p>Loading…</p>';
+    rawLink.href=apiBase+'/files/'+id+'/raw';
+    fetch(viewBase+'?partial=1&file_id='+id,{credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('load failed');
+      return r.text();
+    }).then(function(html){
+      pane.innerHTML=html;
+    }).catch(function(){
+      return fetch(apiBase+'/files/'+id,{credentials:'same-origin'}).then(function(r){
+        if(!r.ok) throw new Error('load failed');
+        return r.json();
+      }).then(function(data){
+        pane.innerHTML='<pre id="paste-content" class="chroma"></pre>';
+        document.getElementById('paste-content').textContent=data.content;
+      }).catch(function(){
+        pane.innerHTML='<p>Failed to load file.</p>';
+      });
+    });
+  }
+
+  items.forEach(function(el){
+    el.addEventListener('click',function(){ selectItem(el); });
+    el.addEventListener('keydown',function(e){
+      var idx=items.indexOf(el);
+      if(e.key==='ArrowDown'||e.key==='j'){ e.preventDefault(); selectItem(items[Math.min(items.length-1,idx+1)]); }
+      else if(e.key==='ArrowUp'||e.key==='k'){ e.preventDefault(); selectItem(items[Math.max(0,idx-1)]); }
+      else if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selectItem(el); }
+      else if(e.key==='Home'){ e.preventDefault(); selectItem(items[0]); }
+      else if(e.key==='End'){ e.preventDefault(); selectItem(items[items.length-1]); }
+    });
+  });
+  picker.addEventListener('change',function(){
+    var el=items.find(function(i){ return i.getAttribute('data-file-id')===picker.value; });
+    selectItem(el);
+  });
+  drawer.addEventListener('click',function(){
+    var open=sidebar.classList.toggle('open');
+    drawer.setAttribute('aria-expanded', open?'true':'false');
+  });
+  document.getElementById('copy-url').addEventListener('click',function(){
+    navigator.clipboard.writeText(this.getAttribute('data-url'));
+  });
+  document.getElementById('copy-contents').addEventListener('click',function(){
+    var el=document.getElementById('paste-content');
+    navigator.clipboard.writeText(el?el.innerText:'');
+  });
+  loadFile(` + strconv.Quote(firstID) + `);
+})();
 </script>
 </body></html>`))
 }
@@ -421,13 +631,19 @@ func (s *Server) handleAPIPasteMeta(w http.ResponseWriter, r *http.Request) {
 		"expires_at":        paste.ExpiresAt,
 	}
 	if unlocked {
-		file, ok := s.loadPasteFileBody(w, r, paste.ID)
+		files, ok := s.loadPasteFileList(w, r, paste.ID)
 		if !ok {
 			return
 		}
-		resp["files"] = []map[string]any{
-			{"path": file.Path, "size_bytes": len(file.Content)},
+		out := make([]map[string]any, 0, len(files))
+		for _, f := range files {
+			out = append(out, map[string]any{
+				"id":         f.ID,
+				"path":       f.Path,
+				"size_bytes": f.SizeBytes,
+			})
 		}
+		resp["files"] = out
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
@@ -466,8 +682,15 @@ type pasteRow struct {
 }
 
 type pasteFileRow struct {
+	ID      int64
 	Path    string
 	Content string
+}
+
+type pasteFileMeta struct {
+	ID        int64
+	Path      string
+	SizeBytes int
 }
 
 func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID string) (*pasteRow, bool) {
@@ -501,8 +724,8 @@ func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID 
 func (s *Server) loadPasteFileBody(w http.ResponseWriter, r *http.Request, pasteID int64) (*pasteFileRow, bool) {
 	var file pasteFileRow
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT path, content FROM paste_files WHERE paste_id = ? ORDER BY id LIMIT 1`, pasteID,
-	).Scan(&file.Path, &file.Content)
+		`SELECT id, path, content FROM paste_files WHERE paste_id = ? ORDER BY id LIMIT 1`, pasteID,
+	).Scan(&file.ID, &file.Path, &file.Content)
 	if err == sql.ErrNoRows {
 		http.NotFound(w, r)
 		return nil, false
@@ -512,6 +735,35 @@ func (s *Server) loadPasteFileBody(w http.ResponseWriter, r *http.Request, paste
 		return nil, false
 	}
 	return &file, true
+}
+
+func (s *Server) loadPasteFileList(w http.ResponseWriter, r *http.Request, pasteID int64) ([]pasteFileMeta, bool) {
+	rows, err := s.db.QueryContext(r.Context(),
+		`SELECT id, path, size_bytes FROM paste_files WHERE paste_id = ? ORDER BY path`, pasteID,
+	)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return nil, false
+	}
+	defer rows.Close()
+	var files []pasteFileMeta
+	for rows.Next() {
+		var f pasteFileMeta
+		if err := rows.Scan(&f.ID, &f.Path, &f.SizeBytes); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return nil, false
+		}
+		files = append(files, f)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return nil, false
+	}
+	if len(files) == 0 {
+		http.NotFound(w, r)
+		return nil, false
+	}
+	return files, true
 }
 
 func highlightCode(filename, content string) string {
