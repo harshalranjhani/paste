@@ -15,6 +15,8 @@ import (
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
+
+	"github.com/harshalranjhani/paste/internal/auth"
 )
 
 const (
@@ -29,6 +31,7 @@ type createPasteRequest struct {
 	Content   string `json:"content"`
 	Title     string `json:"title"`
 	ExpiresIn string `json:"expires_in"`
+	Password  string `json:"password"`
 }
 
 func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +105,7 @@ func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(req.Title)
 	size := len(req.Content)
 
-	publicID, err := s.insertPaste(r, sess.UserID, filename, req.Content, title, ttl)
+	publicID, err := s.insertPaste(r, sess.UserID, filename, req.Content, title, req.Password, ttl)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -197,6 +200,7 @@ func (s *Server) handleNewPasteForm(w http.ResponseWriter, r *http.Request) {
 <option value="1d">1 day</option>
 </select>
 </label>
+<label>Password (optional) <input type="password" name="password" autocomplete="new-password"></label>
 <p>Unlisted: anyone with the link can view. Not indexed or listed publicly.</p>
 <button type="submit">Create</button>
 </form>
@@ -224,6 +228,7 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 	filename := strings.TrimSpace(r.FormValue("filename"))
 	content := r.FormValue("content")
 	expiresIn := strings.TrimSpace(r.FormValue("expires_in"))
+	password := r.FormValue("password")
 	if filename == "" {
 		filename = "paste.txt"
 	}
@@ -256,7 +261,7 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		ttl = parsed
 	}
-	publicID, err := s.insertPaste(r, sess.UserID, filename, content, "", ttl)
+	publicID, err := s.insertPaste(r, sess.UserID, filename, content, "", password, ttl)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -264,13 +269,23 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/p/"+publicID, http.StatusSeeOther)
 }
 
-func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, title string, ttl time.Duration) (string, error) {
+func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, title, password string, ttl time.Duration) (string, error) {
 	expiresAt := time.Now().UTC().Add(ttl)
 	publicID, err := newPublicID()
 	if err != nil {
 		return "", err
 	}
 	size := len(content)
+	protectionMode := "open"
+	var passwordHash any
+	if password != "" {
+		hash, err := auth.HashPassword(password)
+		if err != nil {
+			return "", err
+		}
+		protectionMode = "password"
+		passwordHash = hash
+	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		return "", err
@@ -278,9 +293,9 @@ func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, 
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.ExecContext(r.Context(), `
-INSERT INTO pastes (public_id, owner_user_id, title, protection_mode, expires_at, total_files, total_bytes)
-VALUES (?, ?, ?, 'open', ?, 1, ?)`,
-		publicID, ownerID, nullIfEmpty(title), expiresAt.Format(time.RFC3339Nano), size,
+INSERT INTO pastes (public_id, owner_user_id, title, protection_mode, password_hash, expires_at, total_files, total_bytes)
+VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+		publicID, ownerID, nullIfEmpty(title), protectionMode, passwordHash, expiresAt.Format(time.RFC3339Nano), size,
 	)
 	if err != nil {
 		return "", err
@@ -307,17 +322,25 @@ func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	paste, file, ok := s.loadPasteFile(w, r, r.PathValue("id"))
+	publicID := r.PathValue("id")
+	paste, ok := s.loadPasteMeta(w, r, publicID)
 	if !ok {
 		return
 	}
-	_ = paste
+	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
+		s.writePasteLockScreen(w, publicID, "", http.StatusOK)
+		return
+	}
+	file, ok := s.loadPasteFileBody(w, r, paste.ID)
+	if !ok {
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 
 	highlighted := highlightCode(file.Path, file.Content)
-	pasteURL := s.cfg.BaseURL + "/p/" + r.PathValue("id")
+	pasteURL := s.cfg.BaseURL + "/p/" + publicID
 	rawURL := pasteURL + "/raw"
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
 <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
@@ -350,12 +373,81 @@ document.getElementById('copy-contents').addEventListener('click',function(){
 </body></html>`))
 }
 
+func (s *Server) writePasteLockScreen(w http.ResponseWriter, publicID, errMsg string, status int) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+	msg := ""
+	if errMsg != "" {
+		msg = `<p class="error">` + stdlibhtml.EscapeString(errMsg) + `</p>`
+	}
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
+<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
+<title>Password required</title>
+<style>
+body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:1.5rem}
+.error{color:#a40}
+</style>
+</head><body>
+<h1>Password required</h1>
+<p>This paste is locked. Enter the password to continue.</p>
+` + msg + `
+<form method="post" action="/p/` + stdlibhtml.EscapeString(publicID) + `/unlock">
+<label>Password <input type="password" name="password" required autocomplete="current-password"></label>
+<button type="submit">Unlock</button>
+</form>
+</body></html>`))
+}
+
+func (s *Server) handleAPIPasteMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	publicID := r.PathValue("id")
+	paste, ok := s.loadPasteMeta(w, r, publicID)
+	if !ok {
+		return
+	}
+	passwordRequired := paste.ProtectionMode == "password"
+	unlocked := !passwordRequired || s.hasPasteAccess(r, paste.ID)
+
+	resp := map[string]any{
+		"id":                publicID,
+		"password_required": passwordRequired,
+		"expires_at":        paste.ExpiresAt,
+	}
+	if unlocked {
+		file, ok := s.loadPasteFileBody(w, r, paste.ID)
+		if !ok {
+			return
+		}
+		resp["files"] = []map[string]any{
+			{"path": file.Path, "size_bytes": len(file.Content)},
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 func (s *Server) handlePasteRaw(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	_, file, ok := s.loadPasteFile(w, r, r.PathValue("id"))
+	paste, ok := s.loadPasteMeta(w, r, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
+		writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
+		return
+	}
+	file, ok := s.loadPasteFileBody(w, r, paste.ID)
 	if !ok {
 		return
 	}
@@ -366,9 +458,11 @@ func (s *Server) handlePasteRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 type pasteRow struct {
-	ID        int64
-	PublicID  string
-	ExpiresAt string
+	ID             int64
+	PublicID       string
+	ExpiresAt      string
+	ProtectionMode string
+	PasswordHash   sql.NullString
 }
 
 type pasteFileRow struct {
@@ -376,44 +470,48 @@ type pasteFileRow struct {
 	Content string
 }
 
-func (s *Server) loadPasteFile(w http.ResponseWriter, r *http.Request, publicID string) (*pasteRow, *pasteFileRow, bool) {
+func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID string) (*pasteRow, bool) {
 	if publicID == "" {
 		http.NotFound(w, r)
-		return nil, nil, false
+		return nil, false
 	}
 	var paste pasteRow
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT id, public_id, expires_at FROM pastes WHERE public_id = ?`, publicID,
-	).Scan(&paste.ID, &paste.PublicID, &paste.ExpiresAt)
+		`SELECT id, public_id, expires_at, protection_mode, password_hash FROM pastes WHERE public_id = ?`,
+		publicID,
+	).Scan(&paste.ID, &paste.PublicID, &paste.ExpiresAt, &paste.ProtectionMode, &paste.PasswordHash)
 	if err == sql.ErrNoRows {
 		http.NotFound(w, r)
-		return nil, nil, false
+		return nil, false
 	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return nil, nil, false
+		return nil, false
 	}
 	if expired, err := isExpired(paste.ExpiresAt); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return nil, nil, false
+		return nil, false
 	} else if expired {
 		http.Error(w, "gone", http.StatusGone)
-		return nil, nil, false
+		return nil, false
 	}
+	return &paste, true
+}
 
+func (s *Server) loadPasteFileBody(w http.ResponseWriter, r *http.Request, pasteID int64) (*pasteFileRow, bool) {
 	var file pasteFileRow
-	err = s.db.QueryRowContext(r.Context(),
-		`SELECT path, content FROM paste_files WHERE paste_id = ? ORDER BY id LIMIT 1`, paste.ID,
+	err := s.db.QueryRowContext(r.Context(),
+		`SELECT path, content FROM paste_files WHERE paste_id = ? ORDER BY id LIMIT 1`, pasteID,
 	).Scan(&file.Path, &file.Content)
 	if err == sql.ErrNoRows {
 		http.NotFound(w, r)
-		return nil, nil, false
+		return nil, false
 	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return nil, nil, false
+		return nil, false
 	}
-	return &paste, &file, true
+	return &file, true
 }
 
 func highlightCode(filename, content string) string {

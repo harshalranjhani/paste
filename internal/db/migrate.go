@@ -110,6 +110,21 @@ CREATE TABLE paste_files (
 CREATE INDEX paste_files_paste_id_idx ON paste_files(paste_id);
 `,
 	},
+	{
+		Version: 6,
+		Name:    "paste_access_sessions",
+		SQL: `
+CREATE TABLE paste_access_sessions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	paste_id INTEGER NOT NULL REFERENCES pastes(id) ON DELETE CASCADE,
+	token_hash TEXT NOT NULL UNIQUE,
+	created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+	expires_at TEXT NOT NULL
+);
+CREATE INDEX paste_access_sessions_paste_id_idx ON paste_access_sessions(paste_id);
+CREATE INDEX paste_access_sessions_expires_at_idx ON paste_access_sessions(expires_at);
+`,
+	},
 }
 
 // Migrate applies all pending migrations in order. Safe to call repeatedly.

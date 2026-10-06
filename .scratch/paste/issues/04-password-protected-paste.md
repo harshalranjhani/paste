@@ -4,15 +4,15 @@
 
 **Blocked by:** 03 — Single-file unlisted paste
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] Password is hashed with Argon2id; plaintext is never stored
-- [ ] Locked paste reveals no file names or bodies
-- [ ] Correct password unlocks; incorrect password fails with a generic message
-- [ ] Unlock attempts are rate-limited
-- [ ] Paste-access session is session-scoped in the browser and expires within 1 hour server-side
-- [ ] Paste-access session does not grant account privileges
-- [ ] Raw (and meta) endpoints enforce the same authorization as the viewer
-- [ ] Covered by HTTP-seam tests
+- [x] Password is hashed with Argon2id; plaintext is never stored
+- [x] Locked paste reveals no file names or bodies
+- [x] Correct password unlocks; incorrect password fails with a generic message
+- [x] Unlock attempts are rate-limited
+- [x] Paste-access session is session-scoped in the browser and expires within 1 hour server-side
+- [x] Paste-access session does not grant account privileges
+- [x] Raw (and meta) endpoints enforce the same authorization as the viewer
+- [x] Covered by HTTP-seam tests

@@ -17,13 +17,15 @@ import (
 
 // Server is the HTTP application process.
 type Server struct {
-	cfg     config.Config
-	db      *sql.DB
-	http    *http.Server
-	ln      net.Listener
-	mu      sync.Mutex
-	ready   chan struct{}
-	baseURL string
+	cfg            config.Config
+	db             *sql.DB
+	http           *http.Server
+	ln             net.Listener
+	mu             sync.Mutex
+	ready          chan struct{}
+	baseURL        string
+	unlockMu       sync.Mutex
+	unlockAttempts map[string]unlockAttemptWindow
 }
 
 // New constructs a server from config. It opens the database but does not start listening.
@@ -42,9 +44,10 @@ func New(cfg config.Config) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:   cfg,
-		db:    database,
-		ready: make(chan struct{}),
+		cfg:            cfg,
+		db:             database,
+		ready:          make(chan struct{}),
+		unlockAttempts: make(map[string]unlockAttemptWindow),
 	}
 
 	mux := http.NewServeMux()
@@ -58,8 +61,10 @@ func New(cfg config.Config) (*Server, error) {
 	mux.HandleFunc("/invite/{token}", s.handleInvite)
 	mux.HandleFunc("POST /api/v1/pastes", s.handleAPICreatePaste)
 	mux.HandleFunc("DELETE /api/v1/pastes/{id}", s.handleAPIDeletePaste)
+	mux.HandleFunc("GET /api/v1/pastes/{id}/meta", s.handleAPIPasteMeta)
 	mux.HandleFunc("/new", s.handleNewPaste)
 	mux.HandleFunc("GET /p/{id}/raw", s.handlePasteRaw)
+	mux.HandleFunc("POST /p/{id}/unlock", s.handlePasteUnlock)
 	mux.HandleFunc("GET /p/{id}", s.handlePasteView)
 
 	s.http = &http.Server{

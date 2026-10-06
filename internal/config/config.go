@@ -5,15 +5,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Config holds runtime configuration loaded from the environment.
 type Config struct {
-	BaseURL       string
-	ListenAddr    string
-	DatabasePath  string
-	DataDir       string
-	SessionSecret string
+	BaseURL        string
+	ListenAddr     string
+	DatabasePath   string
+	DataDir        string
+	SessionSecret  string
+	PasteAccessTTL time.Duration // zero means default (1 hour); never exceeds 1 hour
 }
 
 // Load reads configuration from environment variables.
