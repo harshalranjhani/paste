@@ -4,14 +4,14 @@
 
 **Blocked by:** 07 — Personal access tokens
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] `pbin auth login|status|logout` works against a configurable server URL
-- [ ] `echo hi | pbin create --name hello.txt` and `pbin create file.py` return a working paste URL
-- [ ] Successful create prints only the URL on stdout; human detail may go to stderr
-- [ ] `--json`, `--expires`, and interactive `--password` / `--password-stdin` work
-- [ ] `pbin delete <id>` deletes an owned paste
-- [ ] Credentials are not stored world-readable
-- [ ] Covered by CLI-against-test-server tests
+- [x] `pbin auth login|status|logout` works against a configurable server URL
+- [x] `echo hi | pbin create --name hello.txt` and `pbin create file.py` return a working paste URL
+- [x] Successful create prints only the URL on stdout; human detail may go to stderr
+- [x] `--json`, `--expires`, and interactive `--password` / `--password-stdin` work
+- [x] `pbin delete <id>` deletes an owned paste
+- [x] Credentials are not stored world-readable
+- [x] Covered by CLI-against-test-server tests

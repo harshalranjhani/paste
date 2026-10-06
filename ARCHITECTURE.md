@@ -5,7 +5,7 @@ Frozen MVP stack choices for this pastebin. Product behavior lives in `.scratch/
 ## Language and binaries
 
 - **Server:** Go (`cmd/pastebin`)
-- **CLI:** Go sibling binary `pbin` (same module; not yet implemented)
+- **CLI:** Go sibling binary `pbin` (`cmd/pbin`, `internal/pbin`) — auth login/status/logout, create from stdin/file, delete; credentials in `0600` config (`PBIN_CONFIG_DIR` / XDG)
 - **Module:** `github.com/harshalranjhani/paste`
 
 ## Persistence
