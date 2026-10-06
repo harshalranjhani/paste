@@ -4,14 +4,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] Docker Compose brings up the app with a documented data volume
-- [ ] `GET /healthz` returns success when process and DB are healthy, without auth
-- [ ] Migrations apply deterministically on startup
-- [ ] App respects core env config (`BASE_URL`, listen addr, database path, secrets placeholders)
-- [ ] HTTP tests can start the app against a temp SQLite DB
-- [ ] `ARCHITECTURE.md` documents chosen language, DB, content storage, highlighting, and CLI packaging
-- [ ] Process runs as non-root in the image where practical; logs go to stdout/stderr
+- [x] Docker Compose brings up the app with a documented data volume
+- [x] `GET /healthz` returns success when process and DB are healthy, without auth
+- [x] Migrations apply deterministically on startup
+- [x] App respects core env config (`BASE_URL`, listen addr, database path, secrets placeholders)
+- [x] HTTP tests can start the app against a temp SQLite DB
+- [x] `ARCHITECTURE.md` documents chosen language, DB, content storage, highlighting, and CLI packaging
+- [x] Process runs as non-root in the image where practical; logs go to stdout/stderr

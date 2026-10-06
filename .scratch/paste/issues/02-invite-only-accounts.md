@@ -4,17 +4,17 @@
 
 **Blocked by:** 01 — Bootable skeleton
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] First successful `/setup` creates an admin; setup then permanently refuses new accounts
-- [ ] Concurrent setup requests cannot create two bootstrap admins
-- [ ] Login uses Argon2id; sessions are HttpOnly, rotatable on login, invalidatable on logout
-- [ ] State-changing cookie-authenticated requests require CSRF protection
-- [ ] Admin can create/revoke invites; tokens are shown once and stored hashed
-- [ ] Invite default TTL is 7 days; expired and reused invites fail clearly
-- [ ] Invite redemption creates a normal user; optional email constraint is enforced when set
-- [ ] No public `/register` or open signup path exists
-- [ ] Unauthenticated `/` prompts sign-in rather than showing a create editor
-- [ ] Covered by HTTP-seam tests (bootstrap race, invite lifecycle, session/CSRF)
+- [x] First successful `/setup` creates an admin; setup then permanently refuses new accounts
+- [x] Concurrent setup requests cannot create two bootstrap admins
+- [x] Login uses Argon2id; sessions are HttpOnly, rotatable on login, invalidatable on logout
+- [x] State-changing cookie-authenticated requests require CSRF protection
+- [x] Admin can create/revoke invites; tokens are shown once and stored hashed
+- [x] Invite default TTL is 7 days; expired and reused invites fail clearly
+- [x] Invite redemption creates a normal user; optional email constraint is enforced when set
+- [x] No public `/register` or open signup path exists
+- [x] Unauthenticated `/` prompts sign-in rather than showing a create editor
+- [x] Covered by HTTP-seam tests (bootstrap race, invite lifecycle, session/CSRF)

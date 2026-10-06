@@ -1,0 +1,16 @@
+.git
+.scratch
+.data
+data
+*.sqlite
+*.sqlite-journal
+.env
+.env.*
+!.env.example
+bin
+dist
+tmp
+*.md
+!ARCHITECTURE.md
+PLAN.md
+README.md

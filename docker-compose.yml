@@ -1,0 +1,26 @@
+services:
+  paste:
+    build: .
+    ports:
+      - "${PASTE_PORT:-8080}:8080"
+    environment:
+      BASE_URL: ${BASE_URL:-http://localhost:8080}
+      LISTEN_ADDR: 0.0.0.0:8080
+      DATA_DIR: /data
+      DATABASE_PATH: /data/paste.sqlite
+      # Placeholder until auth lands; replace before production use.
+      SESSION_SECRET: ${SESSION_SECRET:-change-me-session-secret}
+    volumes:
+      # Persistent SQLite database and future app data.
+      - paste-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  paste-data:
+    name: paste-data
