@@ -30,7 +30,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>paste</title></head><body>
 <h1>paste</h1>
 <p>Signed in as ` + sess.Username + `.</p>
-<p><a href="/new">New paste</a> · <a href="/me/pastes">My Pastes</a>` + adminLinks(sess) + `</p>
+<p><a href="/new">New paste</a> · <a href="/me/pastes">My Pastes</a> · <a href="/settings/tokens">API tokens</a>` + adminLinks(sess) + `</p>
 <form method="post" action="/logout"><input type="hidden" name="csrf" value="` + sess.CSRFToken + `"><button type="submit">Log out</button></form>
 </body></html>`))
 }

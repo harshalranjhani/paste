@@ -33,17 +33,8 @@ func (s *Server) handleAPICreatePasteBundle(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	sess, err := s.sessionFromRequest(r)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
+	sess := s.requireAPIAuth(w, r, scopePasteCreate)
 	if sess == nil {
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
-		return
-	}
-	if !s.validCSRF(r, sess) {
-		http.Error(w, "csrf required", http.StatusForbidden)
 		return
 	}
 

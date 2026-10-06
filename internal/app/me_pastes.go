@@ -81,6 +81,13 @@ func (s *Server) handleAPIMePastes(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
+	if !sess.hasScope(scopePasteRead) {
+		writeJSONError(w, http.StatusForbidden, "insufficient_scope", "missing required scope: "+scopePasteRead)
+		return
+	}
+	if sess.ViaBearer {
+		s.touchAPIToken(r, sess.TokenID)
+	}
 	pastes, err := s.listUserPastes(r, sess.UserID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

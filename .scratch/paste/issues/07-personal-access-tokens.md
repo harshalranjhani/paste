@@ -4,15 +4,15 @@
 
 **Blocked by:** 02 — Invite-only accounts; 03 — Single-file unlisted paste
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] User can create a token and sees plaintext exactly once
-- [ ] Database stores only a hash; later UI never shows plaintext
-- [ ] User can revoke their own tokens; revoked and expired tokens fail
-- [ ] Missing/wrong scope fails appropriately
-- [ ] Successful API use updates `last_used_at`
-- [ ] Bearer auth can create/read/delete pastes according to scopes without cookie CSRF
-- [ ] Admin cannot read another user’s token plaintext
-- [ ] Covered by HTTP-seam tests
+- [x] User can create a token and sees plaintext exactly once
+- [x] Database stores only a hash; later UI never shows plaintext
+- [x] User can revoke their own tokens; revoked and expired tokens fail
+- [x] Missing/wrong scope fails appropriately
+- [x] Successful API use updates `last_used_at`
+- [x] Bearer auth can create/read/delete pastes according to scopes without cookie CSRF
+- [x] Admin cannot read another user’s token plaintext
+- [x] Covered by HTTP-seam tests

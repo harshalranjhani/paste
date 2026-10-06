@@ -125,6 +125,25 @@ CREATE INDEX paste_access_sessions_paste_id_idx ON paste_access_sessions(paste_i
 CREATE INDEX paste_access_sessions_expires_at_idx ON paste_access_sessions(expires_at);
 `,
 	},
+	{
+		Version: 7,
+		Name:    "api_tokens",
+		SQL: `
+CREATE TABLE api_tokens (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	token_hash TEXT NOT NULL UNIQUE,
+	scopes TEXT NOT NULL,
+	created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+	expires_at TEXT,
+	last_used_at TEXT,
+	revoked_at TEXT
+);
+CREATE INDEX api_tokens_user_id_idx ON api_tokens(user_id);
+CREATE INDEX api_tokens_token_hash_idx ON api_tokens(token_hash);
+`,
+	},
 }
 
 // Migrate applies all pending migrations in order. Safe to call repeatedly.

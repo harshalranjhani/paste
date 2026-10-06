@@ -38,17 +38,8 @@ func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	sess, err := s.sessionFromRequest(r)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
+	sess := s.requireAPIAuth(w, r, scopePasteCreate)
 	if sess == nil {
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
-		return
-	}
-	if !s.validCSRF(r, sess) {
-		http.Error(w, "csrf required", http.StatusForbidden)
 		return
 	}
 
@@ -126,22 +117,13 @@ func (s *Server) handleAPIDeletePaste(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	sess, err := s.sessionFromRequest(r)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
+	sess := s.requireAPIAuth(w, r, scopePasteDelete)
 	if sess == nil {
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
-		return
-	}
-	if !s.validCSRF(r, sess) {
-		http.Error(w, "csrf required", http.StatusForbidden)
 		return
 	}
 	publicID := r.PathValue("id")
 	var ownerID sql.NullInt64
-	err = s.db.QueryRowContext(r.Context(),
+	err := s.db.QueryRowContext(r.Context(),
 		`SELECT owner_user_id FROM pastes WHERE public_id = ?`, publicID,
 	).Scan(&ownerID)
 	if err == sql.ErrNoRows {

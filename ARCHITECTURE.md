@@ -31,7 +31,7 @@ Frozen MVP stack choices for this pastebin. Product behavior lives in `.scratch/
 - Further accounts only via admin invite links (`/admin/invites`, redeem at `/invite/{token}`)
 - Invite tokens: ≥128 bits entropy, shown once, SHA-256 hashed at rest, default TTL 7 days
 - Browser sessions: server-side rows + HttpOnly `session` cookie; CSRF via non-HttpOnly `csrf` cookie / form / `X-CSRF-Token`
-- Personal access tokens: `pb_` prefix, hashed at rest (not yet implemented)
+- Personal access tokens: `pb_` prefix, SHA-256 hashed at rest, show-once, optional expiry, scopes `paste:create|read|delete`, `last_used_at`; Bearer auth skips cookie CSRF
 - Config: `SESSION_SECRET` reserved for future signing needs
 
 ## UI

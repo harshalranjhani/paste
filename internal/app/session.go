@@ -23,6 +23,19 @@ type sessionUser struct {
 	Username  string
 	Role      string
 	CSRFToken string
+	TokenID   int64
+	Scopes    map[string]bool
+	ViaBearer bool
+}
+
+func (u *sessionUser) hasScope(scope string) bool {
+	if u == nil {
+		return false
+	}
+	if !u.ViaBearer {
+		return true
+	}
+	return u.Scopes[scope]
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +165,10 @@ func (s *Server) createSession(ctx context.Context, userID int64) (token, csrf s
 }
 
 func (s *Server) sessionFromRequest(r *http.Request) (*sessionUser, error) {
+	if token, ok := bearerToken(r); ok {
+		return s.bearerFromRequest(r, token)
+	}
+
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil || c.Value == "" {
 		return nil, nil
@@ -183,6 +200,97 @@ WHERE s.token_hash = ?`, hash,
 		return nil, nil
 	}
 	return &sess, nil
+}
+
+func bearerToken(r *http.Request) (string, bool) {
+	authz := r.Header.Get("Authorization")
+	parts := strings.SplitN(authz, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	token := strings.TrimSpace(parts[1])
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+func (s *Server) bearerFromRequest(r *http.Request, token string) (*sessionUser, error) {
+	token = strings.TrimSpace(token)
+	if token == "" || !strings.HasPrefix(token, "pb_") {
+		return nil, nil
+	}
+	hash := auth.HashToken(token)
+	var sess sessionUser
+	var scopes string
+	var expiresAt, revokedAt sql.NullString
+	err := s.db.QueryRowContext(r.Context(), `
+SELECT t.id, t.user_id, u.username, u.role, t.scopes, t.expires_at, t.revoked_at
+FROM api_tokens t
+JOIN users u ON u.id = t.user_id
+WHERE t.token_hash = ?`, hash,
+	).Scan(&sess.TokenID, &sess.UserID, &sess.Username, &sess.Role, &scopes, &expiresAt, &revokedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if revokedAt.Valid {
+		return nil, nil
+	}
+	if expiresAt.Valid {
+		exp, err := parseStoredTime(expiresAt.String)
+		if err != nil {
+			return nil, err
+		}
+		if time.Now().UTC().After(exp) {
+			return nil, nil
+		}
+	}
+	sess.ViaBearer = true
+	sess.Scopes = make(map[string]bool)
+	for _, sc := range splitScopes(scopes) {
+		sess.Scopes[sc] = true
+	}
+	return &sess, nil
+}
+
+func (s *Server) touchAPIToken(r *http.Request, tokenID int64) {
+	if tokenID == 0 {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, _ = s.db.ExecContext(r.Context(),
+		`UPDATE api_tokens SET last_used_at = ? WHERE id = ?`,
+		now, tokenID,
+	)
+}
+
+func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, scope string) *sessionUser {
+	sess, err := s.sessionFromRequest(r)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return nil
+	}
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return nil
+	}
+	if !sess.ViaBearer {
+		if !s.validCSRF(r, sess) {
+			http.Error(w, "csrf required", http.StatusForbidden)
+			return nil
+		}
+	}
+	if !sess.hasScope(scope) {
+		writeJSONError(w, http.StatusForbidden, "insufficient_scope", "missing required scope: "+scope)
+		return nil
+	}
+	if sess.ViaBearer {
+		s.touchAPIToken(r, sess.TokenID)
+	}
+	return sess
 }
 
 func (s *Server) setSessionCookies(w http.ResponseWriter, token, csrf string) {
