@@ -72,6 +72,44 @@ CREATE TABLE invites (
 CREATE INDEX invites_token_hash_idx ON invites(token_hash);
 `,
 	},
+	{
+		Version: 5,
+		Name:    "pastes",
+		SQL: `
+CREATE TABLE pastes (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	public_id TEXT NOT NULL UNIQUE,
+	owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+	title TEXT,
+	protection_mode TEXT NOT NULL DEFAULT 'open' CHECK (protection_mode IN ('open', 'password')),
+	password_hash TEXT,
+	burn_after_read INTEGER NOT NULL DEFAULT 0 CHECK (burn_after_read IN (0, 1)),
+	burned_at TEXT,
+	created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+	expires_at TEXT NOT NULL,
+	delete_token_hash TEXT,
+	total_files INTEGER NOT NULL DEFAULT 0,
+	total_bytes INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX pastes_public_id_idx ON pastes(public_id);
+CREATE INDEX pastes_owner_user_id_idx ON pastes(owner_user_id);
+CREATE INDEX pastes_expires_at_idx ON pastes(expires_at);
+
+CREATE TABLE paste_files (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	paste_id INTEGER NOT NULL REFERENCES pastes(id) ON DELETE CASCADE,
+	path TEXT NOT NULL,
+	display_name TEXT NOT NULL,
+	mime_type TEXT NOT NULL DEFAULT 'text/plain',
+	language TEXT,
+	size_bytes INTEGER NOT NULL,
+	content TEXT NOT NULL,
+	created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+	UNIQUE (paste_id, path)
+);
+CREATE INDEX paste_files_paste_id_idx ON paste_files(paste_id);
+`,
+	},
 }
 
 // Migrate applies all pending migrations in order. Safe to call repeatedly.

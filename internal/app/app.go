@@ -56,6 +56,11 @@ func New(cfg config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/invites", s.handleAdminInvites)
 	mux.HandleFunc("POST /admin/invites/{id}/revoke", s.handleAdminInviteRevoke)
 	mux.HandleFunc("/invite/{token}", s.handleInvite)
+	mux.HandleFunc("POST /api/v1/pastes", s.handleAPICreatePaste)
+	mux.HandleFunc("DELETE /api/v1/pastes/{id}", s.handleAPIDeletePaste)
+	mux.HandleFunc("/new", s.handleNewPaste)
+	mux.HandleFunc("GET /p/{id}/raw", s.handlePasteRaw)
+	mux.HandleFunc("GET /p/{id}", s.handlePasteView)
 
 	s.http = &http.Server{
 		Handler:           mux,
