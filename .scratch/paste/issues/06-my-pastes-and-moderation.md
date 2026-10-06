@@ -4,13 +4,13 @@
 
 **Blocked by:** 03 — Single-file unlisted paste
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] `/me/pastes` lists only the current user’s pastes with the agreed columns
-- [ ] Owner can delete from My Pastes
-- [ ] Admin can locate by exact ID, view safe metadata, and delete
-- [ ] Admin moderation does not expose a sitewide content browser or discovery UI
-- [ ] Users cannot list or delete others’ pastes
-- [ ] Covered by HTTP-seam tests
+- [x] `/me/pastes` lists only the current user’s pastes with the agreed columns
+- [x] Owner can delete from My Pastes
+- [x] Admin can locate by exact ID, view safe metadata, and delete
+- [x] Admin moderation does not expose a sitewide content browser or discovery UI
+- [x] Users cannot list or delete others’ pastes
+- [x] Covered by HTTP-seam tests

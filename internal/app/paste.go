@@ -152,7 +152,9 @@ func (s *Server) handleAPIDeletePaste(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if !ownerID.Valid || ownerID.Int64 != sess.UserID {
+	isOwner := ownerID.Valid && ownerID.Int64 == sess.UserID
+	isAdmin := sess.Role == "admin"
+	if !isOwner && !isAdmin {
 		writeJSONError(w, http.StatusForbidden, "forbidden", "not the paste owner")
 		return
 	}
