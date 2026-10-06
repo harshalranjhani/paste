@@ -4,14 +4,14 @@
 
 **Blocked by:** 04 — Password-protected paste; 05 — Multi-file tree paste; 06 — My Pastes and moderation; 09 — pbin directory upload
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Parent:** [.scratch/paste/SPEC.md](../SPEC.md)
 
-- [ ] Periodic in-process cleanup removes expired paste data and other expired rows per spec
-- [ ] Strict CSP and related security headers are present on app responses
-- [ ] Restrictive `robots.txt`; paste IDs never appear in a sitemap
-- [ ] README covers Compose deploy, backup/restore of `/data`, CLI auth, and reverse proxy notes
-- [ ] Graceful SIGTERM shutdown works
-- [ ] MVP acceptance scenarios from the spec pass (invite-only, single-file, password, folder via CLI, no public discovery)
-- [ ] Out-of-scope items (anonymous create, burn, web folder upload) remain unimplemented and undocumented as required
+- [x] Periodic in-process cleanup removes expired paste data and other expired rows per spec
+- [x] Strict CSP and related security headers are present on app responses
+- [x] Restrictive `robots.txt`; paste IDs never appear in a sitemap
+- [x] README covers Compose deploy, backup/restore of `/data`, CLI auth, and reverse proxy notes
+- [x] Graceful SIGTERM shutdown works
+- [x] MVP acceptance scenarios from the spec pass (invite-only, single-file, password, folder via CLI, no public discovery)
+- [x] Out-of-scope items (anonymous create, burn, web folder upload) remain unimplemented and undocumented as required

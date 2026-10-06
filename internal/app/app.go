@@ -52,6 +52,7 @@ func New(cfg config.Config) (*Server, error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /robots.txt", s.handleRobotsTxt)
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("/setup", s.handleSetup)
 	mux.HandleFunc("/login", s.handleLogin)
@@ -82,7 +83,7 @@ func New(cfg config.Config) (*Server, error) {
 	mux.HandleFunc("GET /p/{id}", s.handlePasteView)
 
 	s.http = &http.Server{
-		Handler:           mux,
+		Handler:           withSecurityHeaders(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return s, nil
@@ -119,6 +120,8 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+
+	go s.runCleanupLoop(ctx)
 
 	select {
 	case <-ctx.Done():
