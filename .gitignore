@@ -1,0 +1,34 @@
+# Binaries / build
+/bin/
+/dist/
+/tmp/
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go
+vendor/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Local runtime data
+/data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Release artifacts
+/pbin
+/pastebin
