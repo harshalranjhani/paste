@@ -98,7 +98,9 @@ go run ./cmd/pastebin
 
 HTTP tests boot the app against a temporary SQLite database via `internal/apptest`.
 
-The UI uses Tailwind CSS with Go-rendered HTML and a small progressive JavaScript file. Assets are embedded in the Go binary; no CDN or Node process is needed at runtime. The compiled stylesheet is checked in so normal Go builds work directly. After changing templates or styles, rebuild it before restarting the server:
+The UI uses Tailwind CSS with Go-rendered HTML and a small progressive JavaScript file. It starts in dark mode; the header toggle remembers your light/dark preference in the browser. The file viewer fills the window, with independently scrolling files and code, larger text, and a fullscreen control where the browser supports it. Chroma highlights its full language catalog with matching light/dark styles; use the syntax selector to override detection for ambiguous filenames. Unknown formats remain readable as plain text.
+
+Assets are embedded in the Go binary; no CDN or Node process is needed at runtime. The compiled stylesheet is checked in so normal Go builds work directly. After changing templates or styles, rebuild it before restarting the server:
 
 ```bash
 npm ci

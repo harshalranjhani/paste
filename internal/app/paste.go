@@ -337,9 +337,14 @@ func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 	w.Header().Set("Cache-Control", "no-store")
+	language := ""
+	if lexer := lexers.Get(r.URL.Query().Get("language")); lexer != nil {
+		language = lexer.Config().Name
+	}
+	w.Header().Set("X-Syntax-Language", language)
 	if r.URL.Query().Get("partial") == "1" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(highlightCode(file.Path, file.Content)))
+		_, _ = w.Write([]byte(highlightCode(file.Path, file.Content, language)))
 		return
 	}
 	sess, err := s.sessionFromRequest(r)
@@ -347,7 +352,7 @@ func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
 		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.writePasteViewer(w, sess, paste, files, file)
+	s.writePasteViewer(w, sess, paste, files, file, language)
 }
 
 func (s *Server) writePasteLockScreen(w http.ResponseWriter, publicID, errMsg string, status int) {
@@ -520,8 +525,11 @@ func (s *Server) loadPasteFileList(w http.ResponseWriter, r *http.Request, paste
 	return files, true
 }
 
-func highlightCode(filename, content string) string {
-	lexer := lexers.Match(filename)
+func highlightCode(filename, content, language string) string {
+	lexer := lexers.Get(language)
+	if lexer == nil {
+		lexer = lexers.Match(filename)
+	}
 	if lexer == nil {
 		lexer = lexers.Analyse(content)
 	}
@@ -535,6 +543,7 @@ func highlightCode(filename, content string) string {
 	}
 	formatter := chromahtml.New(
 		chromahtml.WithClasses(true),
+		chromahtml.WithAllClasses(true),
 		chromahtml.WithLineNumbers(true),
 		chromahtml.LineNumbersInTable(false),
 		chromahtml.ClassPrefix(""),

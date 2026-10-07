@@ -1,5 +1,25 @@
 (() => {
   document.documentElement.classList.add('js');
+  const themeToggle = document.getElementById('theme-toggle');
+  function updateThemeToggle() {
+    const label = document.documentElement.dataset.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    themeToggle.setAttribute('aria-label', label);
+    themeToggle.title = label;
+  }
+  themeToggle.addEventListener('click', () => {
+    const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('paste-theme', theme); } catch {}
+    updateThemeToggle();
+  });
+  window.addEventListener('pageshow', () => {
+    try {
+      const theme = localStorage.getItem('paste-theme');
+      if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+    } catch {}
+    updateThemeToggle();
+  });
+  updateThemeToggle();
   const toast = document.getElementById('toast');
   let toastTimer;
   function notify(message) {
@@ -82,50 +102,83 @@
   });
 
   const pane = document.getElementById('code-pane');
+  const fullscreen = document.getElementById('fullscreen');
+  if (fullscreen && document.fullscreenEnabled) {
+    fullscreen.hidden = false;
+    fullscreen.addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.getElementById('viewer-workspace').requestFullscreen();
+      } catch { notify('Fullscreen is unavailable in this browser.'); }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const active = Boolean(document.fullscreenElement);
+      const label = active ? 'Exit fullscreen' : 'Enter fullscreen';
+      fullscreen.setAttribute('aria-label', label);
+      fullscreen.title = label;
+      fullscreen.setAttribute('aria-pressed', String(active));
+      (document.fullscreenElement || document.body).appendChild(toast);
+    });
+  }
   document.getElementById('wrap-lines')?.addEventListener('click', event => {
     const wrapped = pane.classList.toggle('wrap');
     event.currentTarget.setAttribute('aria-pressed', String(wrapped));
   });
 
   const tree = document.getElementById('file-tree');
-  if (tree) {
-    const links = [...tree.querySelectorAll('.file-link')];
+  if (pane) {
+    const links = tree ? [...tree.querySelectorAll('.file-link')] : [];
     const picker = document.getElementById('file-picker');
+    const codeMain = document.querySelector('.code-main');
+    const syntaxForm = document.getElementById('syntax-form');
+    const syntax = document.getElementById('syntax-language');
     let controller;
     let requestNumber = 0;
-    async function openFile(link, pushHistory = true) {
+    async function openFile(link, pushHistory = true, language = '') {
+      const url = new URL(link ? link.href : location.href);
+      url.searchParams.delete('partial');
+      if (language) url.searchParams.set('language', language);
+      else url.searchParams.delete('language');
+      const partialURL = new URL(url);
+      partialURL.searchParams.set('partial', '1');
       controller?.abort();
       controller = new AbortController();
       const number = ++requestNumber;
       pane.setAttribute('aria-busy', 'true');
       document.getElementById('copy-contents').disabled = true;
       try {
-        const response = await fetch(link.href + '&partial=1', { credentials: 'same-origin', signal: controller.signal });
-        if (response.status === 401) { location.assign(link.href); return; }
+        const response = await fetch(partialURL, { credentials: 'same-origin', signal: controller.signal });
+        if (response.status === 401) { location.assign(url); return; }
         if (!response.ok) throw new Error('File unavailable');
         const code = await response.text();
         if (number !== requestNumber) return;
         pane.innerHTML = code;
         pane.scrollTop = 0;
         pane.scrollLeft = 0;
-        links.forEach(item => {
-          const selected = item === link;
-          item.setAttribute('aria-selected', String(selected));
-          if (selected) item.setAttribute('aria-current', 'page');
-          else item.removeAttribute('aria-current');
-        });
-        let ancestor = link.closest('details');
-        while (ancestor) { ancestor.open = true; ancestor = ancestor.parentElement.closest('details'); }
-        document.getElementById('selected-path').textContent = link.dataset.path;
-        document.getElementById('file-size').textContent = link.dataset.size;
-        const raw = '/api/v1/pastes/' + location.pathname.split('/').pop() + '/files/' + link.dataset.fileId + '/raw';
-        document.getElementById('raw-link').href = raw;
-        document.getElementById('copy-contents').dataset.copyFile = raw;
-        picker.value = link.getAttribute('href');
-        if (pushHistory) history.pushState({}, '', link.href);
+        if (link) {
+          links.forEach(item => {
+            const selected = item === link;
+            item.setAttribute('aria-selected', String(selected));
+            if (selected) item.setAttribute('aria-current', 'page');
+            else item.removeAttribute('aria-current');
+          });
+          let ancestor = link.closest('details');
+          while (ancestor) { ancestor.open = true; ancestor = ancestor.parentElement.closest('details'); }
+          document.getElementById('selected-path').textContent = link.dataset.path;
+          document.getElementById('file-size').textContent = link.dataset.size;
+          const raw = '/api/v1/pastes/' + location.pathname.split('/').pop() + '/files/' + link.dataset.fileId + '/raw';
+          document.getElementById('raw-link').href = raw;
+          document.getElementById('copy-contents').dataset.copyFile = raw;
+          picker.value = link.getAttribute('href');
+          syntaxForm.elements.file_id.value = link.dataset.fileId;
+        }
+        syntax.value = response.headers.get('X-Syntax-Language') || '';
+        codeMain.dataset.language = syntax.value;
+        if (pushHistory) history.pushState({}, '', url);
       } catch (error) {
         if (error.name !== 'AbortError' && number === requestNumber) {
-          picker.value = links.find(item => item.getAttribute('aria-current') === 'page').getAttribute('href');
+          if (picker) picker.value = links.find(item => item.getAttribute('aria-current') === 'page').getAttribute('href');
+          syntax.value = codeMain.dataset.language;
           notify('Could not load this file. Open the file link again to retry.');
         }
       } finally {
@@ -140,16 +193,23 @@
       event.preventDefault();
       openFile(link);
     }));
-    picker.addEventListener('change', () => {
+    picker?.addEventListener('change', () => {
       const link = links.find(item => item.getAttribute('href') === picker.value);
       if (link) openFile(link);
     });
-    window.addEventListener('popstate', () => {
-      const id = new URL(location.href).searchParams.get('file_id');
-      const link = id ? links.find(item => item.dataset.fileId === id) : links.find(item => item.dataset.fileId === document.querySelector('.code-main').dataset.initialFile);
-      if (link) openFile(link, false);
+    syntax.addEventListener('change', () => syntaxForm.requestSubmit());
+    syntaxForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const link = links.find(item => item.getAttribute('aria-current') === 'page');
+      openFile(link, true, syntax.value);
     });
-    document.querySelector('.code-main').dataset.initialFile = links.find(item => item.getAttribute('aria-current') === 'page').dataset.fileId;
+    window.addEventListener('popstate', () => {
+      const params = new URL(location.href).searchParams;
+      const id = params.get('file_id') || codeMain.dataset.initialFile;
+      const link = links.find(item => item.dataset.fileId === id);
+      if (link || !tree) openFile(link, false, params.get('language') || '');
+    });
+    if (!tree) return;
 
     function focusItem(item) {
       if (!item) return;

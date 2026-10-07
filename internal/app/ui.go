@@ -6,10 +6,42 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/alecthomas/chroma/v2"
+	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
+	"github.com/alecthomas/chroma/v2/styles"
 )
 
 //go:embed assets/app.css assets/app.js
 var uiAssets embed.FS
+
+func serveHighlightCSS(w http.ResponseWriter, r *http.Request) {
+	formatter := chromahtml.New(chromahtml.WithAllClasses(true), chromahtml.WithCSSComments(false))
+	var css strings.Builder
+	css.WriteString("@layer base {\n")
+	for _, theme := range []struct{ mode, style string }{{"light", "github"}, {"dark", "github-dark"}} {
+		var rules strings.Builder
+		style := styles.Get(theme.style)
+		if theme.mode == "dark" {
+			// Chroma 2.27's GitHub dark theme omits markup attributes.
+			var err error
+			style, err = style.Builder().AddEntry(chroma.NameAttribute, style.Get(chroma.NameProperty)).Build()
+			if err != nil {
+				http.Error(w, "Highlighting styles unavailable", http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := formatter.WriteCSS(&rules, style); err != nil {
+			http.Error(w, "Highlighting styles unavailable", http.StatusInternalServerError)
+			return
+		}
+		css.WriteString(strings.ReplaceAll(rules.String(), ".chroma", `[data-theme="`+theme.mode+`"] .chroma`))
+	}
+	css.WriteString("}\n")
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write([]byte(css.String()))
+}
 
 func pageStart(title, active string, sess *sessionUser) string {
 	var nav strings.Builder
@@ -32,16 +64,17 @@ func pageStart(title, active string, sess *sessionUser) string {
 		account = `<span class="account-name" title="` + html.EscapeString(sess.Username) + `">` + icon("user") + html.EscapeString(sess.Username) + `</span>
 <form method="post" action="/logout"><input type="hidden" name="csrf" value="` + html.EscapeString(sess.CSRFToken) + `"><button class="button button-ghost" type="submit">Log out</button></form>`
 	}
-	return `<!DOCTYPE html><html lang="en"><head>
+	return `<!DOCTYPE html><html lang="en" data-theme="dark"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
 <title>` + html.EscapeString(title) + ` · paste</title>
-<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script>
+<script>try{const theme=localStorage.getItem('paste-theme');if(theme==='light'||theme==='dark')document.documentElement.dataset.theme=theme}catch{}</script>
+<link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/highlight.css"><script src="/assets/app.js" defer></script>
 </head><body>
 <a class="skip-link" href="#main-content">Skip to content</a>
 <header class="app-header"><div class="header-inner">
 <a class="brand" href="/" aria-label="paste home"><span class="brand-mark">` + icon("code") + `</span>paste<span class="brand-tag">a little space for code</span></a>
-<div class="account-actions">` + account + `</div>
+<div class="account-actions"><button class="button button-ghost theme-toggle" type="button" id="theme-toggle" aria-label="Switch to light mode" title="Switch to light mode"><span class="dark-only">` + icon("sun") + `</span><span class="light-only">` + icon("moon") + `</span></button>` + account + `</div>
 <nav class="app-nav" aria-label="Main navigation">` + nav.String() + `</nav>
 </div></header><main class="page" id="main-content" tabindex="-1">`
 }
@@ -102,6 +135,9 @@ func pasteBadge(mode, expires string) string {
 
 func icon(name string) string {
 	paths := map[string]string{
+		"expand":   `<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>`,
+		"sun":      `<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>`,
+		"moon":     `<path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z"/>`,
 		"code":     `<path d="m8 8-4 4 4 4m8-8 4 4-4 4m-3-11-2 14"/>`,
 		"file":     `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>`,
 		"folder":   `<path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,

@@ -22,7 +22,7 @@ Frozen MVP stack choices for this pastebin. Product behavior lives in `.scratch/
 
 ## Highlighting
 
-- Server-side [Chroma](https://github.com/alecthomas/chroma) for the selected file only (wired when paste viewing lands)
+- Server-side [Chroma](https://github.com/alecthomas/chroma) for the selected file, with automatic detection, a language override, and complete generated styles for both themes
 
 ## Auth / sessions
 
@@ -39,6 +39,7 @@ Frozen MVP stack choices for this pastebin. Product behavior lives in `.scratch/
 - Server-rendered HTML + small progressive JS
 - Tailwind CSS compiled at build time, served locally and embedded with the shared JavaScript in the Go binary
 - Shared navigation and page styles; native expandable folders, regular file links, and a compact mobile picker
+- Dark mode by default, with a persistent browser theme toggle; viewport-filling file viewer and native browser fullscreen
 - No SPA framework requirement
 
 ## CLI packaging

@@ -6,9 +6,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/alecthomas/chroma/v2/lexers"
 )
 
-func (s *Server) writePasteViewer(w http.ResponseWriter, sess *sessionUser, paste *pasteRow, files []pasteFileMeta, selected *pasteFileRow) {
+func (s *Server) writePasteViewer(w http.ResponseWriter, sess *sessionUser, paste *pasteRow, files []pasteFileMeta, selected *pasteFileRow, language string) {
 	viewURL := "/p/" + paste.PublicID
 	pasteURL := s.cfg.BaseURL + viewURL
 	rawURL := "/api/v1/pastes/" + paste.PublicID + "/files/" + strconv.FormatInt(selected.ID, 10) + "/raw"
@@ -31,17 +33,25 @@ func (s *Server) writePasteViewer(w http.ResponseWriter, sess *sessionUser, past
 	}
 	actions := `<div class="viewer-actions"><a class="button" href="` + viewURL + `/archive.zip">` + icon("download") + `Download ZIP</a><button class="button button-primary" type="button" id="copy-url" data-copy="` + html.EscapeString(pasteURL) + `">` + icon("copy") + `Copy link</button></div>`
 	heading := pageHeading("Shared workspace / "+paste.PublicID, title, "", actions)
-	meta := `<div class="mb-6 flex flex-wrap items-center gap-3 text-xs text-muted">` + pasteBadge(paste.ProtectionMode, paste.ExpiresAt) + `<span>` + strconv.Itoa(len(files)) + ` files</span><span>` + formatBytes(totalBytes) + `</span><span>Expires ` + displayTime(paste.ExpiresAt) + `</span></div>`
-	sidebar, picker, layout := "", "", "card"
+	meta := `<div class="viewer-meta">` + pasteBadge(paste.ProtectionMode, paste.ExpiresAt) + `<span>` + strconv.Itoa(len(files)) + ` files</span><span>` + formatBytes(totalBytes) + `</span><span>Expires ` + displayTime(paste.ExpiresAt) + `</span></div>`
+	sidebar, picker, layout := "", "", "card viewer-frame"
 	if len(files) > 1 {
 		layout += " viewer-layout"
 		sidebar = `<aside class="file-sidebar"><div class="sidebar-title"><span>Files</span><span class="badge">` + strconv.Itoa(len(files)) + `</span></div><ul class="file-tree" id="file-tree" role="tree" aria-label="Paste files">` + renderFileTree(files, selected.ID, viewURL) + `</ul><p class="tree-help">Arrow keys to browse · Enter to open</p></aside>`
 		picker = `<label class="file-picker">Select file<select id="file-picker">` + options.String() + `</select></label>`
 	}
-	toolbar := `<div class="code-toolbar"><div class="code-filename">` + icon("file") + `<span id="selected-path">` + html.EscapeString(selected.Path) + `</span></div><div class="viewer-actions"><button class="button button-ghost" type="button" id="wrap-lines" aria-pressed="false">Wrap lines</button><a class="button" id="raw-link" href="` + rawURL + `">Raw</a><button class="button" id="copy-contents" type="button" data-copy-file="` + rawURL + `">` + icon("copy") + `Copy contents</button></div></div>`
-	code := `<div class="code-pane" id="code-pane" aria-label="File contents">` + highlightCode(selected.Path, selected.Content) + `</div>`
-	bottom := `<div class="viewer-bottom"><span>Read only · Syntax highlighted</span><span id="file-size">` + formatBytes(len(selected.Content)) + `</span></div>`
-	writePage(w, title, "", sess, `<div class="viewer-heading">`+heading+`</div>`+meta+picker+`<div class="`+layout+`">`+sidebar+`<section class="code-main" data-view-url="`+viewURL+`">`+toolbar+code+bottom+`</section></div>`)
+	toolbar := `<div class="code-toolbar"><div class="code-filename">` + icon("file") + `<span id="selected-path">` + html.EscapeString(selected.Path) + `</span></div><div class="viewer-actions"><button class="button button-ghost" type="button" id="wrap-lines" aria-label="Wrap lines" aria-pressed="false">Wrap<span class="hidden sm:inline"> lines</span></button><a class="button" id="raw-link" href="` + rawURL + `">Raw</a><button class="button" id="copy-contents" type="button" aria-label="Copy contents" data-copy-file="` + rawURL + `">` + icon("copy") + `Copy<span class="hidden sm:inline"> contents</span></button><button class="button" type="button" id="fullscreen" aria-label="Enter fullscreen" aria-pressed="false" title="Enter fullscreen" hidden>` + icon("expand") + `</button></div></div>`
+	code := `<div class="code-pane" id="code-pane" aria-label="File contents">` + highlightCode(selected.Path, selected.Content, language) + `</div>`
+	var languages strings.Builder
+	for _, name := range lexers.Names(false) {
+		current := ""
+		if name == language {
+			current = " selected"
+		}
+		languages.WriteString(`<option value="` + html.EscapeString(name) + `"` + current + `>` + html.EscapeString(name) + `</option>`)
+	}
+	bottom := `<div class="viewer-bottom"><span>Read only</span><form class="syntax-form" id="syntax-form" action="` + viewURL + `" method="get"><input type="hidden" name="file_id" value="` + strconv.FormatInt(selected.ID, 10) + `"><select name="language" id="syntax-language" aria-label="Syntax language"><option value="">Auto detect</option>` + languages.String() + `</select><button class="button button-ghost syntax-apply" type="submit">Apply syntax</button></form><span id="file-size">` + formatBytes(len(selected.Content)) + `</span></div>`
+	writePage(w, title, "", sess, `<div class="viewer-workspace" id="viewer-workspace"><div class="viewer-heading">`+heading+`</div>`+meta+picker+`<div class="`+layout+`">`+sidebar+`<section class="code-main" data-view-url="`+viewURL+`" data-initial-file="`+strconv.FormatInt(selected.ID, 10)+`" data-language="`+html.EscapeString(language)+`">`+toolbar+code+bottom+`</section></div></div>`)
 }
 
 type fileTreeNode struct {

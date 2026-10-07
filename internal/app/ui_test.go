@@ -28,6 +28,78 @@ func TestLoginProvidesAccessiblePageNavigation(t *testing.T) {
 	}
 }
 
+func TestPublicPagesOfferAThemeToggle(t *testing.T) {
+	h := apptest.Start(t)
+	for _, path := range []string{"/", "/login", "/setup"} {
+		res, err := h.GET(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := readBody(t, res)
+		if !strings.Contains(body, `data-theme="dark"`) || !strings.Contains(body, `aria-label="Switch to light mode"`) {
+			t.Fatalf("%s must start in dark mode and offer an accessible theme toggle", path)
+		}
+	}
+}
+
+func TestHighlightingStylesCoverBothThemes(t *testing.T) {
+	h := apptest.Start(t)
+	res, err := h.GET("/assets/highlight.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/css") {
+		t.Fatal("syntax highlighting must have a locally served stylesheet")
+	}
+	for _, theme := range []string{"light", "dark"} {
+		for _, token := range []string{"k", "nt", "na", "s", "o", "c"} {
+			if !strings.Contains(css, `[data-theme="`+theme+`"] .chroma .`+token+` {`) {
+				t.Fatalf("%s highlighting is missing colors for %s tokens", theme, token)
+			}
+		}
+	}
+}
+
+func TestRecipientCanExpandTheFileViewer(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	paste := mustCreatePasteJSON(t, h, jar, map[string]any{"filename": "hello.go", "content": "package main\n"})
+	res, err := h.GET("/p/" + paste.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readBody(t, res), `aria-label="Enter fullscreen"`) {
+		t.Fatal("the recipient must be able to expand the viewer into fullscreen")
+	}
+}
+
+func TestRecipientCanChooseSyntaxForAnAmbiguousFilename(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	paste := mustCreatePasteJSON(t, h, jar, map[string]any{
+		"filename": "notes.txt", "content": "def greet(name):\n    return 'Hello ' + name\n",
+	})
+	for _, suffix := range []string{"?language=python", "?language=python&partial=1"} {
+		res, err := h.GET("/p/" + paste.ID + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := readBody(t, res)
+		if res.StatusCode != http.StatusOK || !strings.Contains(body, `<span class="k">def</span>`) {
+			t.Fatal("choosing Python must highlight an ambiguous .txt file in full and partial views")
+		}
+		if res.Header.Get("X-Syntax-Language") != "Python" {
+			t.Fatal("language aliases must resolve to the selected syntax name during browser navigation")
+		}
+		if !strings.Contains(suffix, "partial") && (!strings.Contains(body, `aria-label="Syntax language"`) || !strings.Contains(body, `value="Python" selected`)) {
+			t.Fatal("the viewer must show and retain the selected syntax language")
+		}
+	}
+}
+
 func TestMyPastesLetsOwnerOpenAPaste(t *testing.T) {
 	h := apptest.Start(t)
 	mustSetup(t, h, "admin", "correct-horse-battery-staple")

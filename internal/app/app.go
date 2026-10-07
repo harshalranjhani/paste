@@ -51,6 +51,7 @@ func New(cfg config.Config) (*Server, error) {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /assets/highlight.css", serveHighlightCSS)
 	mux.Handle("GET /assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		http.FileServerFS(uiAssets).ServeHTTP(w, r)
