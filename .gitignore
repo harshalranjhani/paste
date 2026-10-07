@@ -10,6 +10,7 @@ coverage.html
 
 # Go
 vendor/
+node_modules/
 
 # IDE / OS
 .idea/

@@ -34,26 +34,9 @@ func TestCleanupDeletesExpiredPasteSoLookupBecomes404(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
+	// Cleanup may delete the paste before a client observes 410. Request-time
+	// expiry is covered separately by TestUnknownPasteIs404ExpiredIs410.
 	deadline := time.Now().Add(3 * time.Second)
-	gotGone := false
-	for time.Now().Before(deadline) {
-		gone, err := h.GET("/p/" + created.ID)
-		if err != nil {
-			t.Fatalf("GET while waiting for expiry: %v", err)
-		}
-		status := gone.StatusCode
-		_ = gone.Body.Close()
-		if status == http.StatusGone {
-			gotGone = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !gotGone {
-		t.Fatal("expected 410 before cleanup")
-	}
-
-	deadline = time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		cleaned, err := h.GET("/p/" + created.ID)
 		if err != nil {

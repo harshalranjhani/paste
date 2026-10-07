@@ -1,5 +1,12 @@
 # syntax=docker/dockerfile:1
 
+FROM node:22-alpine AS ui
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY internal/app ./internal/app
+RUN npm run build:css
+
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 
@@ -9,6 +16,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+COPY --from=ui /src/internal/app/assets/app.css ./internal/app/assets/app.css
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/pastebin ./cmd/pastebin
 
 FROM alpine:3.22

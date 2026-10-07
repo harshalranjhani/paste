@@ -16,65 +16,65 @@ type myPasteRow struct {
 	ExpiresAt      string
 	TotalFiles     int
 	ProtectionMode string
+	FirstPath      string
 }
 
 func (s *Server) handleMePastes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if sess == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeUIError(w, r, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	pastes, err := s.listUserPastes(r, sess.UserID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	var rows strings.Builder
 	for _, p := range pastes {
-		title := p.PublicID
+		title := p.FirstPath
 		if p.Title.Valid && p.Title.String != "" {
 			title = p.Title.String
 		}
 		rows.WriteString("<tr>")
-		rows.WriteString("<td>" + html.EscapeString(title) + "</td>")
-		rows.WriteString("<td>" + html.EscapeString(p.CreatedAt) + "</td>")
-		rows.WriteString("<td>" + html.EscapeString(p.ExpiresAt) + "</td>")
+		rows.WriteString(`<td><a class="paste-title" href="/p/` + html.EscapeString(p.PublicID) + `">` + html.EscapeString(title) + `</a><p class="paste-id">` + html.EscapeString(p.PublicID) + `</p></td>`)
+		rows.WriteString("<td>" + displayTime(p.CreatedAt) + "</td>")
+		rows.WriteString("<td>" + displayTime(p.ExpiresAt) + "</td>")
 		rows.WriteString("<td>" + strconv.Itoa(p.TotalFiles) + "</td>")
-		rows.WriteString("<td>" + html.EscapeString(p.ProtectionMode) + "</td>")
-		rows.WriteString(`<td><form method="post" action="/me/pastes/` + html.EscapeString(p.PublicID) + `/delete">` +
+		rows.WriteString("<td>" + pasteBadge(p.ProtectionMode, p.ExpiresAt) + "</td>")
+		rows.WriteString(`<td><form method="post" data-confirm="Delete this paste? This cannot be undone." action="/me/pastes/` + html.EscapeString(p.PublicID) + `/delete">` +
 			`<input type="hidden" name="csrf" value="` + html.EscapeString(sess.CSRFToken) + `">` +
-			`<button type="submit">Delete</button></form></td>`)
+			`<button class="button button-danger" type="submit">` + icon("trash") + `Delete</button></form></td>`)
 		rows.WriteString("</tr>")
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>My Pastes</title></head><body>
-<h1>My Pastes</h1>
-<table>
+	list := `<div class="card table-scroll"><table>
 <thead><tr><th>Title</th><th>Created</th><th>Expires</th><th>Files</th><th>Protection</th><th>Delete</th></tr></thead>
 <tbody>` + rows.String() + `</tbody>
-</table>
-<p><a href="/">Home</a> · <a href="/new">New paste</a></p>
-</body></html>`))
+</table></div>`
+	if len(pastes) == 0 {
+		list = `<div class="card empty-state"><span class="feature-icon">` + icon("file") + `</span><h2>A clean slate</h2><p>Your pastes will appear here. Create your first snippet or a collection of files.</p><a class="button button-primary" href="/new">` + icon("plus") + `New paste</a></div>`
+	}
+	writePage(w, "My Pastes", "/me/pastes", sess, pageHeading("Your workspace", "My Pastes", "Everything you’ve shared, in one place. Open a paste or remove a link you no longer need.", `<a class="button button-primary" href="/new">`+icon("plus")+`New paste</a>`)+list)
 }
 
 func (s *Server) handleAPIMePastes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if sess == nil {
@@ -90,7 +90,7 @@ func (s *Server) handleAPIMePastes(w http.ResponseWriter, r *http.Request) {
 	}
 	pastes, err := s.listUserPastes(r, sess.UserID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	out := make([]map[string]any, 0, len(pastes))
@@ -114,7 +114,8 @@ func (s *Server) handleAPIMePastes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listUserPastes(r *http.Request, userID int64) ([]myPasteRow, error) {
 	rows, err := s.db.QueryContext(r.Context(), `
-SELECT public_id, title, created_at, expires_at, total_files, protection_mode
+SELECT public_id, title, created_at, expires_at, total_files, protection_mode,
+       COALESCE((SELECT MIN(path) FROM paste_files WHERE paste_id = pastes.id), 'Untitled paste')
 FROM pastes
 WHERE owner_user_id = ?
 ORDER BY created_at DESC`, userID)
@@ -126,7 +127,7 @@ ORDER BY created_at DESC`, userID)
 	var out []myPasteRow
 	for rows.Next() {
 		var p myPasteRow
-		if err := rows.Scan(&p.PublicID, &p.Title, &p.CreatedAt, &p.ExpiresAt, &p.TotalFiles, &p.ProtectionMode); err != nil {
+		if err := rows.Scan(&p.PublicID, &p.Title, &p.CreatedAt, &p.ExpiresAt, &p.TotalFiles, &p.ProtectionMode, &p.FirstPath); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -136,30 +137,30 @@ ORDER BY created_at DESC`, userID)
 
 func (s *Server) handleMePasteDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if sess == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeUIError(w, r, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if !s.validCSRF(r, sess) {
-		http.Error(w, "csrf required", http.StatusForbidden)
+		writeUIError(w, r, "csrf required", http.StatusForbidden)
 		return
 	}
 	publicID := r.PathValue("id")
 	ok, err := s.deleteOwnedPaste(r, sess.UserID, publicID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeUIError(w, r, "forbidden", http.StatusForbidden)
 		return
 	}
 	http.Redirect(w, r, "/me/pastes", http.StatusSeeOther)

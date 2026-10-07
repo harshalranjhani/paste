@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -13,7 +14,7 @@ import (
 func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeUIError(w, r, "not found", http.StatusNotFound)
 		return
 	}
 	switch r.Method {
@@ -22,54 +23,55 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleInviteRedeem(w, r, token)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (s *Server) handleInviteGet(w http.ResponseWriter, r *http.Request, token string) {
 	inv, status, msg := s.lookupRedeemableInvite(r.Context(), token)
 	if inv == nil {
-		http.Error(w, msg, status)
+		writeUIError(w, r, msg, status)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Accept invite</title></head><body>
-<h1>Create your account</h1>
-<form method="post" action="/invite/` + token + `">
-<label>Username <input name="username" required></label>
-<label>Password <input type="password" name="password" required minlength="8"></label>
-<label>Email <input type="email" name="email"></label>
-<button type="submit">Create account</button>
-</form>
-</body></html>`))
+	email := ""
+	if inv.Email.Valid {
+		email = inv.Email.String
+	}
+	writePage(w, "Accept invite", "", nil, `<div class="auth-layout"><div class="auth-intro"><span class="brand-mark">`+icon("user")+`</span><p class="eyebrow">You’re invited</p><h1>Good ideas are better shared.</h1><p class="description">Join this workspace to create your own pastes. A snippet or an entire project, all in one link.</p></div><section class="card auth-card"><h2>Create your account</h2><p class="description">Choose a username and a secure password.</p>
+<form class="stack" method="post" action="/invite/`+html.EscapeString(token)+`">
+<label>Username <input name="username" required autocomplete="username" placeholder="Choose a username"></label>
+<label>Password <input type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></label>
+<label>Email <input type="email" name="email" autocomplete="email" value="`+html.EscapeString(email)+`" placeholder="you@example.com"></label>
+<button class="button button-primary" type="submit">Create account `+icon("arrow")+`</button>
+</form></section></div>`)
 }
 
 func (s *Server) handleInviteRedeem(w http.ResponseWriter, r *http.Request, token string) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeUIError(w, r, "bad request", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	email := strings.TrimSpace(r.FormValue("email"))
 	if username == "" || len(password) < 8 {
-		http.Error(w, "username and password (min 8) required", http.StatusBadRequest)
+		writeUIError(w, r, "username and password (min 8) required", http.StatusBadRequest)
 		return
 	}
 
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	status, msg, err := s.redeemInvite(r.Context(), token, username, hash, email)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if status != http.StatusOK {
-		http.Error(w, msg, status)
+		writeUIError(w, r, msg, status)
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)

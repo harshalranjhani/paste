@@ -21,7 +21,7 @@ type adminPasteMeta struct {
 
 func (s *Server) handleAdminPastes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess := s.requireAdmin(w, r)
@@ -38,9 +38,9 @@ func (s *Server) handleAdminPastes(w http.ResponseWriter, r *http.Request) {
 	if publicID != "" {
 		meta, err := s.loadAdminPasteMeta(r, publicID)
 		if err == sql.ErrNoRows {
-			resultHTML = `<p>No paste found for that ID.</p>`
+			resultHTML = `<div class="card empty-state"><span class="feature-icon">` + icon("file") + `</span><h2>No paste found for that ID.</h2><p>Check the exact ID from the paste link and try again.</p></div>`
 		} else if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			writeUIError(w, r, "internal error", http.StatusInternalServerError)
 			return
 		} else {
 			title := "(untitled)"
@@ -51,40 +51,30 @@ func (s *Server) handleAdminPastes(w http.ResponseWriter, r *http.Request) {
 			if meta.OwnerUsername.Valid {
 				owner = meta.OwnerUsername.String
 			}
-			resultHTML = `<h2>Paste metadata</h2>
-<dl>
+			resultHTML = `<section class="card"><div class="card-header"><h2>Paste metadata</h2><span class="badge">Metadata only</span></div><div class="card-body">
+<dl class="metadata">
 <dt>ID</dt><dd>` + html.EscapeString(meta.PublicID) + `</dd>
 <dt>Title</dt><dd>` + html.EscapeString(title) + `</dd>
 <dt>Owner</dt><dd>` + html.EscapeString(owner) + `</dd>
-<dt>Created</dt><dd>` + html.EscapeString(meta.CreatedAt) + `</dd>
-<dt>Expires</dt><dd>` + html.EscapeString(meta.ExpiresAt) + `</dd>
+<dt>Created</dt><dd>` + displayTime(meta.CreatedAt) + `</dd>
+<dt>Expires</dt><dd>` + displayTime(meta.ExpiresAt) + `</dd>
 <dt>Files</dt><dd>` + strconv.Itoa(meta.TotalFiles) + `</dd>
 <dt>Bytes</dt><dd>` + strconv.Itoa(meta.TotalBytes) + `</dd>
 <dt>Protection</dt><dd>` + html.EscapeString(meta.ProtectionMode) + `</dd>
 </dl>
-<form method="post" action="/admin/pastes/` + html.EscapeString(meta.PublicID) + `/delete">
+<form class="form-actions" method="post" data-confirm="Delete this paste permanently? Its shared link will stop working." action="/admin/pastes/` + html.EscapeString(meta.PublicID) + `/delete">
 <input type="hidden" name="csrf" value="` + html.EscapeString(sess.CSRFToken) + `">
-<button type="submit">Delete paste</button>
-</form>`
+<button class="button button-danger" type="submit">` + icon("trash") + `Delete paste</button>
+</form></div></section>`
 		}
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Paste moderation</title></head><body>
-<h1>Paste moderation</h1>
-<p>Look up a paste by exact public ID. There is no sitewide paste browser.</p>
-<form method="get" action="/admin/pastes">
-<label>Paste ID <input type="text" name="id" value="` + html.EscapeString(publicID) + `" required></label>
-<button type="submit">Look up</button>
-</form>
-` + resultHTML + `
-<p><a href="/">Home</a> · <a href="/admin/invites">Invites</a></p>
-</body></html>`))
+	writePage(w, "Paste moderation", "/admin/pastes", sess, pageHeading("Workspace administration", "Paste moderation", "Look up a paste by exact public ID. Inspect safe metadata and remove a share when needed.", "")+`<div class="max-w-3xl"><section class="card mb-6"><div class="card-body"><form class="stack" method="get" action="/admin/pastes"><label>Paste ID <input type="text" name="id" value="`+html.EscapeString(publicID)+`" placeholder="The ID after /p/ in a paste link" required></label><div class="flex flex-wrap items-center gap-3"><button class="button button-primary" type="submit">Look up `+icon("arrow")+`</button><p class="muted">There is no sitewide paste browser. File contents stay private.</p></div></form></div></section>`+resultHTML+`</div>`)
 }
 
 func (s *Server) handleAdminPasteDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess := s.requireAdmin(w, r)
@@ -92,17 +82,17 @@ func (s *Server) handleAdminPasteDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !s.validCSRF(r, sess) {
-		http.Error(w, "csrf required", http.StatusForbidden)
+		writeUIError(w, r, "csrf required", http.StatusForbidden)
 		return
 	}
 	publicID := r.PathValue("id")
 	ok, err := s.deletePasteByPublicID(r, publicID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
-		http.NotFound(w, r)
+		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 		return
 	}
 	http.Redirect(w, r, "/admin/pastes", http.StatusSeeOther)

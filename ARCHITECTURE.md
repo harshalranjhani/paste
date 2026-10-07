@@ -37,6 +37,8 @@ Frozen MVP stack choices for this pastebin. Product behavior lives in `.scratch/
 ## UI
 
 - Server-rendered HTML + small progressive JS
+- Tailwind CSS compiled at build time, served locally and embedded with the shared JavaScript in the Go binary
+- Shared navigation and page styles; native expandable folders, regular file links, and a compact mobile picker
 - No SPA framework requirement
 
 ## CLI packaging

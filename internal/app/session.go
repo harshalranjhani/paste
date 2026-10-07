@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -41,31 +42,42 @@ func (u *sessionUser) hasScope(scope string) bool {
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Login</title></head><body>
-<h1>Sign in</h1>
-<form method="post" action="/login">
-<label>Username <input name="username" required></label>
-<label>Password <input type="password" name="password" required></label>
-<button type="submit">Sign in</button>
-</form>
-</body></html>`))
+		writeLoginPage(w, "", "", http.StatusOK)
 	case http.MethodPost:
 		s.handleLoginPost(w, r)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func writeLoginPage(w http.ResponseWriter, username, errorMessage string, status int) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	message := ""
+	if errorMessage != "" {
+		message = `<p class="alert alert-error mt-5" role="alert">` + html.EscapeString(errorMessage) + `</p>`
+	}
+	writePage(w, "Sign in", "/login", nil, `<div class="auth-layout">
+<div class="auth-intro"><span class="brand-mark">`+icon("code")+`</span><p class="eyebrow">Your code, a link away</p><h1>A small space for your next big idea.</h1><p class="description">Share a snippet or a whole file tree. Simple, unlisted, and easy to read.</p></div>
+<section class="card auth-card"><h2>Welcome back</h2><p class="description">Sign in to create and manage your pastes.</p>
+`+message+`<form class="stack" method="post" action="/login">
+<label>Username <input name="username" required autocomplete="username" placeholder="Your username" value="`+html.EscapeString(username)+`"></label>
+<label>Password <input type="password" name="password" required autocomplete="current-password" placeholder="Your password"></label>
+<button class="button button-primary" type="submit">Sign in `+icon("arrow")+`</button>
+<p class="muted">Accounts are invite-only. Ask your administrator for an invite.</p>
+</form></section></div>`)
 }
 
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeUIError(w, r, "bad request", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	if username == "" || password == "" {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeLoginPage(w, username, "Invalid credentials. Check your username and password, then try again.", http.StatusUnauthorized)
 		return
 	}
 
@@ -75,22 +87,22 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, password_hash FROM users WHERE username = ? COLLATE NOCASE`, username,
 	).Scan(&userID, &passwordHash)
 	if err == sql.ErrNoRows {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeLoginPage(w, username, "Invalid credentials. Check your username and password, then try again.", http.StatusUnauthorized)
 		return
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	ok, err := auth.CheckPassword(passwordHash, password)
 	if err != nil || !ok {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeLoginPage(w, username, "Invalid credentials. Check your username and password, then try again.", http.StatusUnauthorized)
 		return
 	}
 
 	token, csrf, err := s.createSession(r.Context(), userID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	s.setSessionCookies(w, token, csrf)
@@ -99,20 +111,20 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess, err := s.sessionFromRequest(r)
 	if err != nil || sess == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeUIError(w, r, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if !s.validCSRF(r, sess) {
-		http.Error(w, "csrf required", http.StatusForbidden)
+		writeUIError(w, r, "csrf required", http.StatusForbidden)
 		return
 	}
 	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM sessions WHERE id = ?`, sess.SessionID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	s.clearSessionCookies(w)
@@ -270,7 +282,7 @@ func (s *Server) touchAPIToken(r *http.Request, tokenID int64) {
 func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, scope string) *sessionUser {
 	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return nil
 	}
 	if sess == nil {
@@ -279,7 +291,7 @@ func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, scope st
 	}
 	if !sess.ViaBearer {
 		if !s.validCSRF(r, sess) {
-			http.Error(w, "csrf required", http.StatusForbidden)
+			writeUIError(w, r, "csrf required", http.StatusForbidden)
 			return nil
 		}
 	}

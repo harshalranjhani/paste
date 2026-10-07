@@ -16,56 +16,53 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleSetupPost(w, r)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
 	n, err := s.countUsers(r.Context())
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if n > 0 {
-		http.Error(w, "setup disabled", http.StatusForbidden)
+		writeUIError(w, r, "setup disabled", http.StatusForbidden)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Setup</title></head><body>
-<h1>Create admin account</h1>
-<form method="post" action="/setup">
-<label>Username <input name="username" required></label>
-<label>Password <input type="password" name="password" required minlength="8"></label>
-<button type="submit">Create admin</button>
-</form>
-</body></html>`))
+	writePage(w, "Set up your workspace", "", nil, `<div class="auth-layout"><div class="auth-intro"><span class="brand-mark">`+icon("code")+`</span><p class="eyebrow">Welcome to paste</p><h1>A fresh start for your ideas.</h1><p class="description">Create the first administrator account to set up your workspace. You can invite your team once you’re signed in.</p></div><section class="card auth-card"><h2>Create admin account</h2><p class="description">This setup is available only once.</p>
+<form class="stack" method="post" action="/setup">
+<label>Username <input name="username" required autocomplete="username" placeholder="Choose a username"></label>
+<label>Password <input type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></label>
+<button class="button button-primary" type="submit">Create admin `+icon("arrow")+`</button>
+</form></section></div>`)
 }
 
 func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeUIError(w, r, "bad request", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	if username == "" || len(password) < 8 {
-		http.Error(w, "username and password (min 8) required", http.StatusBadRequest)
+		writeUIError(w, r, "username and password (min 8) required", http.StatusBadRequest)
 		return
 	}
 
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	created, err := s.createBootstrapAdmin(r.Context(), username, hash)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if !created {
-		http.Error(w, "setup disabled", http.StatusForbidden)
+		writeUIError(w, r, "setup disabled", http.StatusForbidden)
 		return
 	}
 

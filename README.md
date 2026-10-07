@@ -98,6 +98,17 @@ go run ./cmd/pastebin
 
 HTTP tests boot the app against a temporary SQLite database via `internal/apptest`.
 
+The UI uses Tailwind CSS with Go-rendered HTML and a small progressive JavaScript file. Assets are embedded in the Go binary; no CDN or Node process is needed at runtime. The compiled stylesheet is checked in so normal Go builds work directly. After changing templates or styles, rebuild it before restarting the server:
+
+```bash
+npm ci
+npm run build:css
+# Or keep CSS rebuilding while editing:
+npm run watch:css
+```
+
+Docker builds compile the stylesheet automatically in a separate Node build stage. The runtime image still contains only the Go server.
+
 ## Ops notes
 
 - Process listens for `SIGTERM`/`SIGINT` and shuts down the HTTP server gracefully.

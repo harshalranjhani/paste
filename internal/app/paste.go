@@ -35,7 +35,7 @@ type createPasteRequest struct {
 
 func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess := s.requireAPIAuth(w, r, scopePasteCreate)
@@ -97,7 +97,7 @@ func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
 
 	publicID, err := s.insertPaste(r, sess.UserID, filename, req.Content, title, req.Password, ttl)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -114,7 +114,7 @@ func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIDeletePaste(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sess := s.requireAPIAuth(w, r, scopePasteDelete)
@@ -131,7 +131,7 @@ func (s *Server) handleAPIDeletePaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	isOwner := ownerID.Valid && ownerID.Int64 == sess.UserID
@@ -141,7 +141,7 @@ func (s *Server) handleAPIDeletePaste(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pastes WHERE public_id = ?`, publicID); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -154,69 +154,44 @@ func (s *Server) handleNewPaste(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.handleNewPasteCreate(w, r)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (s *Server) handleNewPasteForm(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if sess == nil {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
-<title>New paste</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:1.5rem;max-width:48rem}
-label{display:block;margin:0.75rem 0}
-.file-row{border:1px solid #ccc;padding:0.75rem;margin:0.75rem 0}
-button{font:inherit}
-</style>
-</head><body>
-<h1>New paste</h1>
+	writePage(w, "New paste", "", sess, pageHeading("Create something", "New paste", "A quick snippet or a collection of files. Give it a name, then share it with one link.", "")+`
 <form method="post" action="/new" id="paste-form">
-<input type="hidden" name="csrf" value="` + stdlibhtml.EscapeString(sess.CSRFToken) + `">
-<div id="files">
-<div class="file-row">
-<label>Path <input name="path" value="paste.txt" required></label>
-<label>Content <textarea name="content" rows="12" cols="80" required></textarea></label>
-</div>
-</div>
-<p><button type="button" id="add-file">Add file</button></p>
-<label>Expires in
-<select name="expires_in">
-<option value="90d" selected>90 days</option>
-<option value="30d">30 days</option>
-<option value="7d">7 days</option>
-<option value="1d">1 day</option>
-</select>
-</label>
-<label>Password (optional) <input type="password" name="password" autocomplete="new-password"></label>
-<p>Unlisted: anyone with the link can view. Not indexed or listed publicly. Add multiple files with relative paths (no directory picker required).</p>
-<button type="submit">Create</button>
-</form>
-<script>
-document.getElementById('add-file').addEventListener('click',function(){
-  var row=document.createElement('div');
-  row.className='file-row';
-  row.innerHTML='<label>Path <input name="path" required></label><label>Content <textarea name="content" rows="8" cols="80" required></textarea></label><button type="button" class="remove-file">Remove</button>';
-  row.querySelector('.remove-file').addEventListener('click',function(){ row.remove(); });
-  document.getElementById('files').appendChild(row);
-});
-</script>
-</body></html>`))
+<input type="hidden" name="csrf" value="`+stdlibhtml.EscapeString(sess.CSRFToken)+`">
+<div class="editor-layout"><div>
+<label class="mb-5">Title <span class="muted">Optional, but useful for finding this paste later.</span><input name="title" placeholder="e.g. A tiny HTTP server" maxlength="200"></label>
+<div class="section-title"><h2>Files <span class="badge" id="file-count">1 file</span></h2><button class="button" type="button" id="add-file">`+icon("plus")+`Add file</button></div>
+<div id="files"><section class="file-row card"><div class="card-header">
+<label class="file-path">`+icon("file")+`<span class="sr-only">Path</span><input name="path" value="paste.txt" placeholder="src/main.go" required aria-label="File path"></label>
+<button class="button button-ghost remove-file" type="button" disabled aria-label="Remove file">Remove</button></div>
+<label><span class="sr-only">Content</span><textarea name="content" rows="14" aria-label="File contents" placeholder="Paste your code or text here…" spellcheck="false"></textarea></label>
+</section></div><p class="muted">Use relative paths like src/main.go to create folders. Text files only, up to 2 MB each.</p>
+</div><aside class="card editor-settings"><div class="card-header"><h2>Sharing settings</h2></div><div class="card-body stack">
+<div><span class="badge badge-green">`+icon("lock")+`Unlisted</span><p class="muted mt-3">Anyone with the link can view. Your paste won’t appear in a public list or search engine.</p></div>
+<label>Expires in<select name="expires_in"><option value="90d" selected>90 days</option><option value="30d">30 days</option><option value="7d">7 days</option><option value="1d">1 day</option></select></label>
+<label>Password <span class="muted">Optional. Require a password to view.</span><input type="password" name="password" autocomplete="new-password" placeholder="Add a password"></label>
+<button class="button button-primary" type="submit">Create paste `+icon("arrow")+`</button><p class="muted">Pastes are read only after creation. Double-check your files before sharing.</p>
+</div></aside></div></form>`)
+
 }
 
 func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if sess == nil {
@@ -224,11 +199,11 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.validCSRF(r, sess) {
-		http.Error(w, "csrf required", http.StatusForbidden)
+		writeUIError(w, r, "csrf required", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeUIError(w, r, "bad request", http.StatusBadRequest)
 		return
 	}
 	expiresIn := strings.TrimSpace(r.FormValue("expires_in"))
@@ -244,15 +219,15 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(paths) == 0 {
-		http.Error(w, "at least one file is required", http.StatusBadRequest)
+		writeUIError(w, r, "at least one file is required", http.StatusBadRequest)
 		return
 	}
 	if len(contents) != len(paths) {
-		http.Error(w, "path and content counts must match", http.StatusBadRequest)
+		writeUIError(w, r, "path and content counts must match", http.StatusBadRequest)
 		return
 	}
 	if len(paths) > maxFilesPerPaste {
-		http.Error(w, "too many files", http.StatusBadRequest)
+		writeUIError(w, r, "too many files", http.StatusBadRequest)
 		return
 	}
 
@@ -269,27 +244,27 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 				filename = "paste.txt"
 			}
 			if strings.Contains(filename, "/") || strings.Contains(filename, "\\") || filename == ".." || filename == "." {
-				http.Error(w, "invalid path", http.StatusBadRequest)
+				writeUIError(w, r, "invalid path", http.StatusBadRequest)
 				return
 			}
 			normalized = filename
 		}
 		if _, dup := seen[normalized]; dup {
-			http.Error(w, "duplicate path", http.StatusBadRequest)
+			writeUIError(w, r, "duplicate path", http.StatusBadRequest)
 			return
 		}
 		seen[normalized] = struct{}{}
 		if !utf8.ValidString(content) {
-			http.Error(w, "content must be valid UTF-8 text", http.StatusBadRequest)
+			writeUIError(w, r, "content must be valid UTF-8 text", http.StatusBadRequest)
 			return
 		}
 		if len(content) > maxFileBytes {
-			http.Error(w, "content too large", http.StatusBadRequest)
+			writeUIError(w, r, "content too large", http.StatusBadRequest)
 			return
 		}
 		totalBytes += len(content)
 		if totalBytes > maxPasteBytes {
-			http.Error(w, "paste too large", http.StatusBadRequest)
+			writeUIError(w, r, "paste too large", http.StatusBadRequest)
 			return
 		}
 		files = append(files, pasteFileInput{Path: normalized, Content: content})
@@ -299,22 +274,22 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 	if expiresIn != "" {
 		parsed, err := parseDurationDays(expiresIn)
 		if err != nil {
-			http.Error(w, "invalid expires_in", http.StatusBadRequest)
+			writeUIError(w, r, "invalid expires_in", http.StatusBadRequest)
 			return
 		}
 		if parsed > maxPasteTTL {
-			http.Error(w, "expires_in exceeds maximum of 90 days", http.StatusBadRequest)
+			writeUIError(w, r, "expires_in exceeds maximum of 90 days", http.StatusBadRequest)
 			return
 		}
 		if parsed < time.Second {
-			http.Error(w, "expires_in too short", http.StatusBadRequest)
+			writeUIError(w, r, "expires_in too short", http.StatusBadRequest)
 			return
 		}
 		ttl = parsed
 	}
-	publicID, err := s.insertPasteFiles(r, sess.UserID, "", password, ttl, files)
+	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(r.FormValue("title")), password, ttl, files)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/p/"+publicID, http.StatusSeeOther)
@@ -327,248 +302,57 @@ func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, 
 }
 
 func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	publicID := r.PathValue("id")
-	paste, ok := s.loadPasteMeta(w, r, publicID)
+	paste, ok := s.loadPasteMeta(w, r, r.PathValue("id"))
 	if !ok {
 		return
 	}
 	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
-		s.writePasteLockScreen(w, publicID, "", http.StatusOK)
+		if r.URL.Query().Get("partial") == "1" {
+			writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
+		} else {
+			s.writePasteLockScreen(w, paste.PublicID, "", http.StatusOK)
+		}
 		return
 	}
 	files, ok := s.loadPasteFileList(w, r, paste.ID)
 	if !ok {
 		return
 	}
-
-	// Fragment for lazy tree pane highlighting.
-	if r.URL.Query().Get("partial") == "1" {
-		fileID, err := strconv.ParseInt(r.URL.Query().Get("file_id"), 10, 64)
+	if len(files) == 0 {
+		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
+		return
+	}
+	fileID := files[0].ID
+	if rawID := r.URL.Query().Get("file_id"); rawID != "" {
+		var err error
+		fileID, err = strconv.ParseInt(rawID, 10, 64)
 		if err != nil || fileID <= 0 {
-			http.NotFound(w, r)
+			writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 			return
 		}
-		file, ok := s.loadPasteFileByID(w, r, paste.ID, fileID)
-		if !ok {
-			return
-		}
+	}
+	file, ok := s.loadPasteFileByID(w, r, paste.ID, fileID)
+	if !ok {
+		return
+	}
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.Query().Get("partial") == "1" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 		_, _ = w.Write([]byte(highlightCode(file.Path, file.Content)))
 		return
 	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
-
-	if len(files) == 1 {
-		file, ok := s.loadPasteFileByID(w, r, paste.ID, files[0].ID)
-		if !ok {
-			return
-		}
-		s.writeSingleFileViewer(w, publicID, file)
+	sess, err := s.sessionFromRequest(r)
+	if err != nil {
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.writeTreeViewer(w, publicID, files)
-}
-
-func (s *Server) writeSingleFileViewer(w http.ResponseWriter, publicID string, file *pasteFileRow) {
-	highlighted := highlightCode(file.Path, file.Content)
-	pasteURL := s.cfg.BaseURL + "/p/" + publicID
-	rawURL := pasteURL + "/raw"
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
-<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
-<title>` + stdlibhtml.EscapeString(file.Path) + `</title>
-<style>
-body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:1.5rem}
-h1{font-size:1rem;font-weight:600}
-.actions{display:flex;gap:0.75rem;margin:0.75rem 0;font-size:0.875rem}
-.chroma{overflow:auto;padding:1rem;background:#f6f8fa}
-.chroma .line{display:flex}
-.chroma .ln{user-select:none;min-width:3ch;padding-right:1rem;text-align:right;opacity:.5}
-</style>
-</head><body>
-<h1>` + stdlibhtml.EscapeString(file.Path) + `</h1>
-<p class="actions">
-<a href="` + stdlibhtml.EscapeString(rawURL) + `">Raw</a>
-<a href="` + stdlibhtml.EscapeString(pasteURL+"/archive.zip") + `">ZIP</a>
-<button type="button" id="copy-url" data-url="` + stdlibhtml.EscapeString(pasteURL) + `">Copy URL</button>
-<button type="button" id="copy-contents">Copy contents</button>
-</p>
-` + highlighted + `
-<script>
-document.getElementById('copy-url').addEventListener('click',function(){
-  navigator.clipboard.writeText(this.getAttribute('data-url'));
-});
-document.getElementById('copy-contents').addEventListener('click',function(){
-  var el=document.getElementById('paste-content');
-  navigator.clipboard.writeText(el?el.innerText:'');
-});
-</script>
-</body></html>`))
-}
-
-func (s *Server) writeTreeViewer(w http.ResponseWriter, publicID string, files []pasteFileMeta) {
-	pasteURL := s.cfg.BaseURL + "/p/" + publicID
-	apiBase := "/api/v1/pastes/" + publicID
-	viewBase := "/p/" + publicID
-
-	var treeItems strings.Builder
-	for i, f := range files {
-		attrs := ` aria-selected="false" class="tree-item" tabindex="-1"`
-		if i == 0 {
-			attrs = ` aria-selected="true" class="tree-item selected" tabindex="0"`
-		}
-		treeItems.WriteString(`<li role="treeitem"` + attrs +
-			` data-file-id="` + strconv.FormatInt(f.ID, 10) +
-			`" data-path="` + stdlibhtml.EscapeString(f.Path) + `">` +
-			stdlibhtml.EscapeString(f.Path) + `</li>`)
-	}
-
-	firstID := strconv.FormatInt(files[0].ID, 10)
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
-<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Paste ` + stdlibhtml.EscapeString(publicID) + `</title>
-<style>
-:root{color-scheme:light dark}
-body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:0;min-height:100vh}
-.layout{display:grid;grid-template-columns:minmax(12rem,18rem) 1fr;min-height:100vh}
-.sidebar{border-right:1px solid #ccc;padding:0.75rem;background:#f6f8fa}
-@media (prefers-color-scheme:dark){.sidebar{background:#1a1a1a;border-color:#333}}
-.sidebar h1{font-size:0.875rem;margin:0 0 0.75rem}
-#file-tree{list-style:none;margin:0;padding:0}
-.tree-item{padding:0.35rem 0.5rem;cursor:pointer;border-radius:0.25rem}
-.tree-item:hover,.tree-item:focus{outline:2px solid #0969da;outline-offset:-2px}
-.tree-item.selected{background:#ddf4ff}
-@media (prefers-color-scheme:dark){.tree-item.selected{background:#1f3a5f}}
-.main{padding:1rem;min-width:0}
-.actions{display:flex;flex-wrap:wrap;gap:0.75rem;margin:0 0 0.75rem;font-size:0.875rem}
-.chroma{overflow:auto;padding:1rem;background:#f6f8fa}
-.chroma .line{display:flex}
-.chroma .ln{user-select:none;min-width:3ch;padding-right:1rem;text-align:right;opacity:.5}
-.drawer-toggle{display:none}
-.file-picker{display:none;width:100%;margin-bottom:0.75rem;font:inherit}
-@media (max-width:720px){
-  .layout{grid-template-columns:1fr}
-  .sidebar{display:none;position:fixed;inset:0 auto 0 0;width:min(80vw,18rem);z-index:10;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
-  .sidebar.open{display:block}
-  .drawer-toggle{display:inline-block}
-  .file-picker{display:block}
-}
-</style>
-</head><body>
-<div class="layout">
-<aside class="sidebar" id="sidebar">
-<h1>Files</h1>
-<ul id="file-tree" role="tree" aria-label="Paste files">` + treeItems.String() + `</ul>
-</aside>
-<main class="main">
-<p class="actions">
-<button type="button" class="drawer-toggle" id="drawer-toggle" aria-controls="sidebar" aria-expanded="false">Files</button>
-<select class="file-picker" id="file-picker" aria-label="Select file"></select>
-<a id="raw-link" href="#">Raw</a>
-<a href="` + stdlibhtml.EscapeString(pasteURL+"/archive.zip") + `">ZIP</a>
-<button type="button" id="copy-url" data-url="` + stdlibhtml.EscapeString(pasteURL) + `">Copy URL</button>
-<button type="button" id="copy-contents">Copy contents</button>
-</p>
-<div id="code-pane"><p>Loading…</p></div>
-</main>
-</div>
-<script>
-(function(){
-  var apiBase=` + strconv.Quote(apiBase) + `;
-  var viewBase=` + strconv.Quote(viewBase) + `;
-  var items=[].slice.call(document.querySelectorAll('#file-tree [role="treeitem"]'));
-  var pane=document.getElementById('code-pane');
-  var rawLink=document.getElementById('raw-link');
-  var picker=document.getElementById('file-picker');
-  var drawer=document.getElementById('drawer-toggle');
-  var sidebar=document.getElementById('sidebar');
-
-  items.forEach(function(el){
-    var opt=document.createElement('option');
-    opt.value=el.getAttribute('data-file-id');
-    opt.textContent=el.getAttribute('data-path');
-    picker.appendChild(opt);
-  });
-
-  function selectItem(el){
-    if(!el) return;
-    items.forEach(function(i){
-      i.classList.remove('selected');
-      i.setAttribute('aria-selected','false');
-      i.tabIndex=-1;
-    });
-    el.classList.add('selected');
-    el.setAttribute('aria-selected','true');
-    el.tabIndex=0;
-    el.focus();
-    picker.value=el.getAttribute('data-file-id');
-    loadFile(el.getAttribute('data-file-id'));
-    sidebar.classList.remove('open');
-    drawer.setAttribute('aria-expanded','false');
-  }
-
-  function loadFile(id){
-    pane.innerHTML='<p>Loading…</p>';
-    rawLink.href=apiBase+'/files/'+id+'/raw';
-    fetch(viewBase+'?partial=1&file_id='+id,{credentials:'same-origin'}).then(function(r){
-      if(!r.ok) throw new Error('load failed');
-      return r.text();
-    }).then(function(html){
-      pane.innerHTML=html;
-    }).catch(function(){
-      return fetch(apiBase+'/files/'+id,{credentials:'same-origin'}).then(function(r){
-        if(!r.ok) throw new Error('load failed');
-        return r.json();
-      }).then(function(data){
-        pane.innerHTML='<pre id="paste-content" class="chroma"></pre>';
-        document.getElementById('paste-content').textContent=data.content;
-      }).catch(function(){
-        pane.innerHTML='<p>Failed to load file.</p>';
-      });
-    });
-  }
-
-  items.forEach(function(el){
-    el.addEventListener('click',function(){ selectItem(el); });
-    el.addEventListener('keydown',function(e){
-      var idx=items.indexOf(el);
-      if(e.key==='ArrowDown'||e.key==='j'){ e.preventDefault(); selectItem(items[Math.min(items.length-1,idx+1)]); }
-      else if(e.key==='ArrowUp'||e.key==='k'){ e.preventDefault(); selectItem(items[Math.max(0,idx-1)]); }
-      else if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selectItem(el); }
-      else if(e.key==='Home'){ e.preventDefault(); selectItem(items[0]); }
-      else if(e.key==='End'){ e.preventDefault(); selectItem(items[items.length-1]); }
-    });
-  });
-  picker.addEventListener('change',function(){
-    var el=items.find(function(i){ return i.getAttribute('data-file-id')===picker.value; });
-    selectItem(el);
-  });
-  drawer.addEventListener('click',function(){
-    var open=sidebar.classList.toggle('open');
-    drawer.setAttribute('aria-expanded', open?'true':'false');
-  });
-  document.getElementById('copy-url').addEventListener('click',function(){
-    navigator.clipboard.writeText(this.getAttribute('data-url'));
-  });
-  document.getElementById('copy-contents').addEventListener('click',function(){
-    var el=document.getElementById('paste-content');
-    navigator.clipboard.writeText(el?el.innerText:'');
-  });
-  loadFile(` + strconv.Quote(firstID) + `);
-})();
-</script>
-</body></html>`))
+	s.writePasteViewer(w, sess, paste, files, file)
 }
 
 func (s *Server) writePasteLockScreen(w http.ResponseWriter, publicID, errMsg string, status int) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 	if status == 0 {
 		status = http.StatusOK
@@ -576,29 +360,14 @@ func (s *Server) writePasteLockScreen(w http.ResponseWriter, publicID, errMsg st
 	w.WriteHeader(status)
 	msg := ""
 	if errMsg != "" {
-		msg = `<p class="error">` + stdlibhtml.EscapeString(errMsg) + `</p>`
+		msg = `<p class="alert alert-error" role="alert">` + stdlibhtml.EscapeString(errMsg) + `</p>`
 	}
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head>
-<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
-<title>Password required</title>
-<style>
-body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:1.5rem}
-.error{color:#a40}
-</style>
-</head><body>
-<h1>Password required</h1>
-<p>This paste is locked. Enter the password to continue.</p>
-` + msg + `
-<form method="post" action="/p/` + stdlibhtml.EscapeString(publicID) + `/unlock">
-<label>Password <input type="password" name="password" required autocomplete="current-password"></label>
-<button type="submit">Unlock</button>
-</form>
-</body></html>`))
+	writePage(w, "Password required", "", nil, `<div class="auth-layout"><div class="auth-intro"><span class="brand-mark">`+icon("lock")+`</span><p class="eyebrow">A little extra privacy</p><h1>This paste is password protected.</h1><p class="description">Ask the person who shared this link for the password. The files stay private until you unlock them.</p></div><section class="card auth-card"><h2>Password required</h2><p class="description">Enter the password to continue.</p>`+msg+`<form class="stack" method="post" action="/p/`+stdlibhtml.EscapeString(publicID)+`/unlock"><label>Password <input type="password" name="password" required autocomplete="current-password" autofocus></label><button class="button button-primary" type="submit">`+icon("lock")+`Unlock paste</button></form></section></div>`)
 }
 
 func (s *Server) handleAPIPasteMeta(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	publicID := r.PathValue("id")
@@ -636,7 +405,7 @@ func (s *Server) handleAPIPasteMeta(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePasteRaw(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeUIError(w, r, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	paste, ok := s.loadPasteMeta(w, r, r.PathValue("id"))
@@ -660,6 +429,7 @@ func (s *Server) handlePasteRaw(w http.ResponseWriter, r *http.Request) {
 type pasteRow struct {
 	ID             int64
 	PublicID       string
+	Title          sql.NullString
 	ExpiresAt      string
 	ProtectionMode string
 	PasswordHash   sql.NullString
@@ -679,27 +449,27 @@ type pasteFileMeta struct {
 
 func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID string) (*pasteRow, bool) {
 	if publicID == "" {
-		http.NotFound(w, r)
+		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 		return nil, false
 	}
 	var paste pasteRow
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT id, public_id, expires_at, protection_mode, password_hash FROM pastes WHERE public_id = ?`,
+		`SELECT id, public_id, expires_at, protection_mode, password_hash, title FROM pastes WHERE public_id = ?`,
 		publicID,
-	).Scan(&paste.ID, &paste.PublicID, &paste.ExpiresAt, &paste.ProtectionMode, &paste.PasswordHash)
+	).Scan(&paste.ID, &paste.PublicID, &paste.ExpiresAt, &paste.ProtectionMode, &paste.PasswordHash, &paste.Title)
 	if err == sql.ErrNoRows {
-		http.NotFound(w, r)
+		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 		return nil, false
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return nil, false
 	}
 	if expired, err := isExpired(paste.ExpiresAt); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return nil, false
 	} else if expired {
-		http.Error(w, "gone", http.StatusGone)
+		writeUIError(w, r, "gone", http.StatusGone)
 		return nil, false
 	}
 	return &paste, true
@@ -711,11 +481,11 @@ func (s *Server) loadPasteFileBody(w http.ResponseWriter, r *http.Request, paste
 		`SELECT id, path, content FROM paste_files WHERE paste_id = ? ORDER BY id LIMIT 1`, pasteID,
 	).Scan(&file.ID, &file.Path, &file.Content)
 	if err == sql.ErrNoRows {
-		http.NotFound(w, r)
+		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 		return nil, false
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return nil, false
 	}
 	return &file, true
@@ -726,7 +496,7 @@ func (s *Server) loadPasteFileList(w http.ResponseWriter, r *http.Request, paste
 		`SELECT id, path, size_bytes FROM paste_files WHERE paste_id = ? ORDER BY path`, pasteID,
 	)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return nil, false
 	}
 	defer rows.Close()
@@ -734,17 +504,17 @@ func (s *Server) loadPasteFileList(w http.ResponseWriter, r *http.Request, paste
 	for rows.Next() {
 		var f pasteFileMeta
 		if err := rows.Scan(&f.ID, &f.Path, &f.SizeBytes); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			writeUIError(w, r, "internal error", http.StatusInternalServerError)
 			return nil, false
 		}
 		files = append(files, f)
 	}
 	if err := rows.Err(); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return nil, false
 	}
 	if len(files) == 0 {
-		http.NotFound(w, r)
+		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 		return nil, false
 	}
 	return files, true
