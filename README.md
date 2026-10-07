@@ -69,25 +69,40 @@ Copy the SQLite file alone only if you understand WAL sidecars; preferring a ful
 
 ## CLI (`pbin`)
 
-Build the sibling binary:
+Install from any directory, without cloning the repository (requires [Go](https://go.dev/dl/) 1.26 or newer):
 
 ```bash
-go build -o pbin ./cmd/pbin
+go install github.com/harshalranjhani/paste/cmd/pbin@latest
 ```
+
+The repository must be **public** for this command to work without GitHub credentials. Go installs `pbin` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH` if your shell cannot find `pbin`. To install a specific release, replace `@latest` with its tag, such as `@v0.1.0`.
+
+Without Go, download the archive for your machine from [GitHub Releases](https://github.com/harshalranjhani/paste/releases/latest). Extract `pbin` (or `pbin.exe` on Windows) and put it in a directory on your `PATH`. Downloads cover Linux, macOS (`darwin`), and Windows, each for Intel/AMD (`amd64`) and ARM (`arm64`). Each release includes `checksums.txt` for SHA-256 verification.
 
 Authenticate with a Personal Access Token from `/settings/tokens` (scopes `paste:create`, `paste:read`, `paste:delete` as needed):
 
 ```bash
-./pbin auth login --server https://paste.example.com
+pbin auth login --server https://paste.example.com
 # prompts for the token (hidden); stores credentials in a 0600 config file
-./pbin auth status
-./pbin create ./path/to/file.go
-./pbin create ./path/to/directory   # multi-file tree via bundle API
-./pbin delete <paste-id>
-./pbin auth logout
+pbin auth status
+pbin create ./path/to/file.go
+pbin create ./path/to/directory   # multi-file tree via bundle API
+pbin delete <paste-id>
+pbin auth logout
 ```
 
 Successful `create` prints only the paste URL on stdout. Config directory defaults to the OS config path; override with `PBIN_CONFIG_DIR`.
+
+## Releasing the CLI
+
+Push a semantic version tag to run [.github/workflows/release.yml](.github/workflows/release.yml):
+
+```bash
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
+```
+
+The workflow runs the Go suite, builds six archives with [scripts/build-cli-release.sh](scripts/build-cli-release.sh), and publishes them with checksums and generated release notes. Tags with a suffix such as `v0.2.0-beta.1` create prereleases. Use a new tag for each version. To build the archives locally, run `bash scripts/build-cli-release.sh v0.1.0` from the repository root (requires Go, Bash, Python 3, tar, and sha256sum).
 
 ## Development
 
