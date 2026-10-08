@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,6 +20,15 @@ import (
 )
 
 var pbinBin string
+
+func TestVersionReportsEmbeddedReleaseVersion(t *testing.T) {
+	for _, command := range []string{"version", "--version"} {
+		stdout, stderr, code := runPbin(t, t.TempDir(), "", command)
+		if code != 0 || stdout != "pbin v0.1.2\n" || stderr != "" {
+			t.Fatalf("%s: code=%d stdout=%q stderr=%q", command, code, stdout, stderr)
+		}
+	}
+}
 
 func TestCreateSlugChoicesWorkForStdinFileAndDirectory(t *testing.T) {
 	h := apptest.Start(t)
@@ -131,12 +141,18 @@ func TestCreateBurnFlagWorksForStdinFileAndDirectory(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("PBIN_TEST_RELEASE_URL") != "" {
+		runUpdateTestProcess()
+	}
 	dir, err := os.MkdirTemp("", "pbin-bin-*")
 	if err != nil {
 		panic(err)
 	}
 	pbinBin = filepath.Join(dir, "pbin")
-	cmd := exec.Command("go", "build", "-o", pbinBin, "github.com/harshalranjhani/paste/cmd/pbin")
+	if runtime.GOOS == "windows" {
+		pbinBin += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-ldflags", "-X main.version=v0.1.2", "-o", pbinBin, "github.com/harshalranjhani/paste/cmd/pbin")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

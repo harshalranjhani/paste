@@ -13,7 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  updater:
+    uses: ./.github/workflows/cli-checks.yml
   release:
+    needs: updater
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

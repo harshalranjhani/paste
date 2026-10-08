@@ -17,12 +17,21 @@ import (
 )
 
 // Run executes the pbin CLI and returns a process exit code.
-func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, version string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: pbin <command>")
 		return 2
 	}
 	switch args[0] {
+	case "update":
+		return runUpdate(args[1:], stdout, stderr, buildVersion(version))
+	case "version", "--version":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: pbin version")
+			return 2
+		}
+		fmt.Fprintln(stdout, "pbin "+buildVersion(version))
+		return 0
 	case "auth":
 		return runAuth(args[1:], stdin, stdout, stderr, getenv)
 	case "create":

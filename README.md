@@ -75,7 +75,7 @@ Install from any directory, without cloning the repository (requires [Go](https:
 go install github.com/harshalranjhani/paste/cmd/pbin@latest
 ```
 
-The repository must be **public** for this command to work without GitHub credentials. Go installs `pbin` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH` if your shell cannot find `pbin`. To install a specific release, replace `@latest` with its tag, such as `@v0.1.1`.
+The repository must be **public** for this command to work without GitHub credentials. Go installs `pbin` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH` if your shell cannot find `pbin`. To install a specific release, replace `@latest` with its tag, such as `@v0.1.2`.
 
 Without Go, download the archive for your machine from [GitHub Releases](https://github.com/harshalranjhani/paste/releases/latest). Extract `pbin` (or `pbin.exe` on Windows) and put it in a directory on your `PATH`. Downloads cover Linux, macOS (`darwin`), and Windows, each for Intel/AMD (`amd64`) and ARM (`arm64`). Each release includes `checksums.txt` for SHA-256 verification.
 
@@ -95,6 +95,60 @@ pbin auth logout
 ```
 
 Successful `create` prints only the paste URL on stdout. Config directory defaults to the OS config path; override with `PBIN_CONFIG_DIR`.
+
+### Update an installed CLI
+
+Starting with v0.1.2, run:
+
+```bash
+pbin version
+pbin update
+pbin version
+```
+
+`pbin update` downloads the latest stable GitHub release for the CLI's OS and CPU,
+verifies its SHA-256 checksum, checks that the new executable reports the expected
+version, and replaces the currently running installation. Go is not required.
+Login settings stay intact. If the CLI is already current or newer than the latest
+stable release, it skips the download. The installation directory must be writable;
+otherwise the command reports an error and a manual download link. On Windows,
+an in-use `pbin.exe.old` backup may remain until the next update.
+
+### Download again or upgrade an older CLI
+
+Versions before v0.1.2 do not have `pbin update`. Upgrade once using either path:
+
+- **With Go:** rerun `go install github.com/harshalranjhani/paste/cmd/pbin@latest`
+  from any directory. To get this release specifically, use `@v0.1.2`.
+- **Without Go:** open [GitHub Releases](https://github.com/harshalranjhani/paste/releases/latest),
+  download the archive matching your OS and CPU plus `checksums.txt`, verify its
+  checksum, extract it, and replace the existing `pbin` or `pbin.exe` on your `PATH`.
+  Run `pbin version` to confirm the installed version. Your login settings are kept.
+
+For example, on Linux with an Intel/AMD CPU, download
+`pbin_v0.1.2_linux_amd64.tar.gz` and `checksums.txt` from the
+[v0.1.2 release](https://github.com/harshalranjhani/paste/releases/tag/v0.1.2), then:
+
+```bash
+sha256sum --ignore-missing -c checksums.txt
+```
+
+After the downloaded archive reports `OK`, extract and install it:
+
+```bash
+tar -xzf pbin_v0.1.2_linux_amd64.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 755 pbin "$HOME/.local/bin/pbin"
+# Ensure $HOME/.local/bin is on PATH and takes precedence over older installations.
+pbin version
+```
+
+On macOS, compare `shasum -a 256 pbin_v0.1.2_darwin_arm64.tar.gz` with its line in
+`checksums.txt` (use the `amd64` archive for an Intel Mac).
+On Windows PowerShell, use
+`Get-FileHash .\pbin_v0.1.2_windows_amd64.zip -Algorithm SHA256`, compare
+the hash with `checksums.txt`, then use `Expand-Archive` and replace `pbin.exe` in
+the existing installation directory.
 
 ## Paste slugs
 
@@ -147,7 +201,15 @@ git tag -a v0.2.0 -m "Release v0.2.0"
 git push origin v0.2.0
 ```
 
-The workflow runs the Go suite, builds six archives with [scripts/build-cli-release.sh](scripts/build-cli-release.sh), and publishes them with checksums and generated release notes. Tags with a suffix such as `v0.2.0-beta.1` create prereleases. Use a new tag for each version. To build the archives locally, run `bash scripts/build-cli-release.sh v0.1.0` from the repository root (requires Go, Bash, Python 3, tar, and sha256sum).
+The workflow first verifies CLI updates on Linux, macOS, and Windows, then runs the
+Go suite and browser E2E tests, builds six archives with
+[scripts/build-cli-release.sh](scripts/build-cli-release.sh), and publishes them
+with checksums and generated release notes. Ordinary pushes to `main` and pull
+requests run [CLI checks](.github/workflows/cli-checks.yml); publishing requires a
+version tag. Tags with a suffix such as `v0.2.0-beta.1` create prereleases. Use a new
+tag for each version. To build the archives locally, run
+`bash scripts/build-cli-release.sh v0.1.2` from the repository root (requires Go,
+Bash, Python 3, tar, and sha256sum).
 
 ## Development
 
@@ -168,7 +230,8 @@ npm run test:e2e
 ```
 
 The release workflow runs both the browser E2E tests and the Go suite before
-publishing downloads. See [v0.1.1](docs/v0.1.1.md) for the feature contract.
+publishing downloads. See [v0.1.1](docs/v0.1.1.md) and [v0.1.2](docs/v0.1.2.md)
+for the feature contracts.
 
 The UI uses Tailwind CSS with Go-rendered HTML and a small progressive JavaScript file. It starts in dark mode; the header toggle remembers your light/dark preference in the browser. The file viewer fills the window, with independently scrolling files and code, larger text, and a fullscreen control where the browser supports it. Chroma highlights its full language catalog with matching light/dark styles; use the syntax selector to override detection for ambiguous filenames. Unknown formats remain readable as plain text.
 

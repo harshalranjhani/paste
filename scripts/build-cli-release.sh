@@ -19,7 +19,7 @@ for target_os in linux darwin windows; do
     binary=pbin
     if [[ "$target_os" == windows ]]; then binary=pbin.exe; fi
     CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" \
-      go build -trimpath -ldflags='-s -w' -o "$build_dir/$binary" ./cmd/pbin
+      go build -trimpath -ldflags="-s -w -X main.version=$version" -o "$build_dir/$binary" ./cmd/pbin
     name="pbin_${version}_${target_os}_${target_arch}"
     if [[ "$target_os" == windows ]]; then
       archive="$name.zip"
