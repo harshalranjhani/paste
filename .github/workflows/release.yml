@@ -24,6 +24,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build UI and install browser
+        run: |
+          npm ci
+          npm run build:css
+          npx playwright install --with-deps chromium
+      - name: Browser E2E tests
+        run: npm run test:e2e
       - name: Test
         run: go test ./...
       - name: Build CLI downloads

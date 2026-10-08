@@ -26,11 +26,12 @@ const (
 )
 
 type createPasteRequest struct {
-	Filename  string `json:"filename"`
-	Content   string `json:"content"`
-	Title     string `json:"title"`
-	ExpiresIn string `json:"expires_in"`
-	Password  string `json:"password"`
+	Filename      string `json:"filename"`
+	Content       string `json:"content"`
+	Title         string `json:"title"`
+	ExpiresIn     string `json:"expires_in"`
+	Password      string `json:"password"`
+	BurnAfterRead bool   `json:"burn_after_read"`
 }
 
 func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +96,7 @@ func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(req.Title)
 	size := len(req.Content)
 
-	publicID, err := s.insertPaste(r, sess.UserID, filename, req.Content, title, req.Password, ttl)
+	publicID, err := s.insertPaste(r, sess.UserID, filename, req.Content, title, req.Password, ttl, req.BurnAfterRead)
 	if err != nil {
 		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
@@ -183,6 +184,7 @@ func (s *Server) handleNewPasteForm(w http.ResponseWriter, r *http.Request) {
 <div><span class="badge badge-green">`+icon("lock")+`Unlisted</span><p class="muted mt-3">Anyone with the link can view. Your paste won’t appear in a public list or search engine.</p></div>
 <label>Expires in<select name="expires_in"><option value="90d" selected>90 days</option><option value="30d">30 days</option><option value="7d">7 days</option><option value="1d">1 day</option></select></label>
 <label>Password <span class="muted">Optional. Require a password to view.</span><input type="password" name="password" autocomplete="new-password" placeholder="Add a password"></label>
+<div><label class="checkbox-label"><input type="checkbox" name="burn_after_read">Burn after read</label><p class="muted mt-2">One reader can reveal the paste, then browse its files for up to 15 minutes. Opening the link won’t consume it.</p></div>
 <button class="button button-primary" type="submit">Create paste `+icon("arrow")+`</button><p class="muted">Pastes are read only after creation. Double-check your files before sharing.</p>
 </div></aside></div></form>`)
 
@@ -287,7 +289,7 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		ttl = parsed
 	}
-	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(r.FormValue("title")), password, ttl, files)
+	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(r.FormValue("title")), password, ttl, files, r.FormValue("burn_after_read") == "on")
 	if err != nil {
 		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
@@ -295,10 +297,10 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/p/"+publicID, http.StatusSeeOther)
 }
 
-func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, title, password string, ttl time.Duration) (string, error) {
+func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, title, password string, ttl time.Duration, burnAfterRead bool) (string, error) {
 	return s.insertPasteFiles(r, ownerID, title, password, ttl, []pasteFileInput{
 		{Path: filename, Content: content},
-	})
+	}, burnAfterRead)
 }
 
 func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
@@ -306,11 +308,19 @@ func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
+	if paste.ProtectionMode == "password" && !paste.BurnedAt.Valid && !s.hasPasteAccess(r, paste.ID) {
 		if r.URL.Query().Get("partial") == "1" {
 			writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
 		} else {
 			s.writePasteLockScreen(w, paste.PublicID, "", http.StatusOK)
+		}
+		return
+	}
+	if paste.BurnAfterRead && !paste.BurnedAt.Valid {
+		if r.URL.Query().Get("partial") == "1" {
+			writeJSONError(w, http.StatusForbidden, "reveal_required", "reveal required")
+		} else {
+			s.writePasteRevealScreen(w, r, paste)
 		}
 		return
 	}
@@ -342,9 +352,12 @@ func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
 		language = lexer.Config().Name
 	}
 	w.Header().Set("X-Syntax-Language", language)
+	mode := fileViewMode(file.Path, r.URL.Query().Get("view"))
+	w.Header().Set("X-Viewer-Mode", mode)
+	w.Header().Set("X-File-Preview", filePreviewKind(file.Path))
 	if r.URL.Query().Get("partial") == "1" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(highlightCode(file.Path, file.Content, language)))
+		_, _ = w.Write([]byte(renderFileContents(file, language, mode)))
 		return
 	}
 	sess, err := s.sessionFromRequest(r)
@@ -352,7 +365,7 @@ func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
 		writeUIError(w, r, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.writePasteViewer(w, sess, paste, files, file, language)
+	s.writePasteViewer(w, sess, paste, files, file, language, mode)
 }
 
 func (s *Server) writePasteLockScreen(w http.ResponseWriter, publicID, errMsg string, status int) {
@@ -381,12 +394,21 @@ func (s *Server) handleAPIPasteMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	passwordRequired := paste.ProtectionMode == "password"
-	unlocked := !passwordRequired || s.hasPasteAccess(r, paste.ID)
+	revealRequired := paste.BurnAfterRead && !paste.BurnedAt.Valid
+	unlocked := (!passwordRequired || paste.BurnedAt.Valid || s.hasPasteAccess(r, paste.ID)) && !revealRequired
+	if revealRequired {
+		if _, err := s.burnCSRFToken(w, r); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
 
 	resp := map[string]any{
 		"id":                publicID,
 		"password_required": passwordRequired,
 		"expires_at":        paste.ExpiresAt,
+		"burn_after_read":   paste.BurnAfterRead,
+		"reveal_required":   revealRequired,
 	}
 	if unlocked {
 		files, ok := s.loadPasteFileList(w, r, paste.ID)
@@ -417,8 +439,7 @@ func (s *Server) handlePasteRaw(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
-		writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
+	if !s.requirePasteContent(w, r, paste) {
 		return
 	}
 	file, ok := s.loadPasteFileBody(w, r, paste.ID)
@@ -438,6 +459,8 @@ type pasteRow struct {
 	ExpiresAt      string
 	ProtectionMode string
 	PasswordHash   sql.NullString
+	BurnAfterRead  bool
+	BurnedAt       sql.NullString
 }
 
 type pasteFileRow struct {
@@ -453,15 +476,17 @@ type pasteFileMeta struct {
 }
 
 func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID string) (*pasteRow, bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 	if publicID == "" {
 		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 		return nil, false
 	}
 	var paste pasteRow
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT id, public_id, expires_at, protection_mode, password_hash, title FROM pastes WHERE public_id = ?`,
+		`SELECT id, public_id, expires_at, protection_mode, password_hash, title, burn_after_read, burned_at FROM pastes WHERE public_id = ?`,
 		publicID,
-	).Scan(&paste.ID, &paste.PublicID, &paste.ExpiresAt, &paste.ProtectionMode, &paste.PasswordHash, &paste.Title)
+	).Scan(&paste.ID, &paste.PublicID, &paste.ExpiresAt, &paste.ProtectionMode, &paste.PasswordHash, &paste.Title, &paste.BurnAfterRead, &paste.BurnedAt)
 	if err == sql.ErrNoRows {
 		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
 		return nil, false
@@ -475,6 +500,10 @@ func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID 
 		return nil, false
 	} else if expired {
 		writeUIError(w, r, "gone", http.StatusGone)
+		return nil, false
+	}
+	if paste.BurnedAt.Valid && !s.hasBurnAccess(r, &paste) {
+		writeUIError(w, r, "This paste has already been revealed or its viewing time has ended.", http.StatusGone)
 		return nil, false
 	}
 	return &paste, true

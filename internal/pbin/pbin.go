@@ -243,6 +243,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 	jsonOut := false
 	passwordPrompt := false
 	passwordStdin := false
+	burnAfterRead := false
 	var pathArg string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -266,6 +267,8 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 			passwordPrompt = true
 		case "--password-stdin":
 			passwordStdin = true
+		case "--burn":
+			burnAfterRead = true
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				fmt.Fprintf(stderr, "unknown flag: %s\n", args[i])
@@ -300,7 +303,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 			if code != 0 {
 				return code
 			}
-			return createFromDirectory(cfg, pathArg, name, expires, password, jsonOut, stdin, stdout, stderr)
+			return createFromDirectory(cfg, pathArg, name, expires, password, burnAfterRead, jsonOut, stdin, stdout, stderr)
 		}
 		content, err := os.ReadFile(pathArg)
 		if err != nil {
@@ -315,7 +318,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 		if code != 0 {
 			return code
 		}
-		return createSingleFile(cfg, filename, content, expires, password, jsonOut, stdout, stderr)
+		return createSingleFile(cfg, filename, content, expires, password, burnAfterRead, jsonOut, stdout, stderr)
 	}
 
 	if passwordStdin {
@@ -335,7 +338,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 	if code != 0 {
 		return code
 	}
-	return createSingleFile(cfg, filename, content, expires, password, jsonOut, stdout, stderr)
+	return createSingleFile(cfg, filename, content, expires, password, burnAfterRead, jsonOut, stdout, stderr)
 }
 
 func readCreatePassword(prompt, fromStdin bool, stdin io.Reader, stderr io.Writer) (string, int) {
@@ -375,10 +378,11 @@ type uploadFile struct {
 	Content []byte
 }
 
-func createSingleFile(cfg fileConfig, filename string, content []byte, expires, password string, jsonOut bool, stdout, stderr io.Writer) int {
+func createSingleFile(cfg fileConfig, filename string, content []byte, expires, password string, burnAfterRead, jsonOut bool, stdout, stderr io.Writer) int {
 	payload := map[string]any{
-		"filename": filename,
-		"content":  string(content),
+		"filename":        filename,
+		"content":         string(content),
+		"burn_after_read": burnAfterRead,
 	}
 	if expires != "" {
 		payload["expires_in"] = expires
@@ -408,7 +412,7 @@ func createSingleFile(cfg fileConfig, filename string, content []byte, expires, 
 	return writeCreateResponse(res, cfg, filename, len(content), jsonOut, stdout, stderr)
 }
 
-func createFromDirectory(cfg fileConfig, root, title, expires, password string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) int {
+func createFromDirectory(cfg fileConfig, root, title, expires, password string, burnAfterRead, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) int {
 	files, err := collectDirectoryFiles(root)
 	if err != nil {
 		fmt.Fprintf(stderr, "scan directory: %v\n", err)
@@ -437,6 +441,9 @@ func createFromDirectory(cfg fileConfig, root, title, expires, password string, 
 	fmt.Fprintf(stderr, "  %d bytes\n", totalBytes)
 	fmt.Fprintf(stderr, "  expires: %s\n", expiryLabel)
 	fmt.Fprintf(stderr, "  visibility: unlisted\n")
+	if burnAfterRead {
+		fmt.Fprintln(stderr, "  burn after read: one reader, up to 15 minutes")
+	}
 	fmt.Fprint(stderr, "Upload? [y/N] ")
 	answer, err := readLine(stdin)
 	if err != nil && err != io.EOF {
@@ -449,7 +456,7 @@ func createFromDirectory(cfg fileConfig, root, title, expires, password string, 
 		fmt.Fprintln(stderr, "aborted")
 		return 1
 	}
-	return uploadBundle(cfg, title, expires, password, files, jsonOut, stdout, stderr)
+	return uploadBundle(cfg, title, expires, password, files, burnAfterRead, jsonOut, stdout, stderr)
 }
 
 func sensitivePathWarnings(files []uploadFile) []string {
@@ -631,11 +638,11 @@ func hasPathPrefix(rel, prefix string) bool {
 	return rel == prefix || strings.HasPrefix(rel, prefix+"/")
 }
 
-func uploadBundle(cfg fileConfig, title, expires, password string, files []uploadFile, jsonOut bool, stdout, stderr io.Writer) int {
+func uploadBundle(cfg fileConfig, title, expires, password string, files []uploadFile, burnAfterRead, jsonOut bool, stdout, stderr io.Writer) int {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
-	meta := map[string]any{}
+	meta := map[string]any{"burn_after_read": burnAfterRead}
 	if title != "" {
 		meta["title"] = title
 	}

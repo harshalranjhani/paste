@@ -75,7 +75,7 @@ Install from any directory, without cloning the repository (requires [Go](https:
 go install github.com/harshalranjhani/paste/cmd/pbin@latest
 ```
 
-The repository must be **public** for this command to work without GitHub credentials. Go installs `pbin` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH` if your shell cannot find `pbin`. To install a specific release, replace `@latest` with its tag, such as `@v0.1.0`.
+The repository must be **public** for this command to work without GitHub credentials. Go installs `pbin` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH` if your shell cannot find `pbin`. To install a specific release, replace `@latest` with its tag, such as `@v0.1.1`.
 
 Without Go, download the archive for your machine from [GitHub Releases](https://github.com/harshalranjhani/paste/releases/latest). Extract `pbin` (or `pbin.exe` on Windows) and put it in a directory on your `PATH`. Downloads cover Linux, macOS (`darwin`), and Windows, each for Intel/AMD (`amd64`) and ARM (`arm64`). Each release includes `checksums.txt` for SHA-256 verification.
 
@@ -87,11 +87,36 @@ pbin auth login --server https://paste.example.com
 pbin auth status
 pbin create ./path/to/file.go
 pbin create ./path/to/directory   # multi-file tree via bundle API
+pbin create secret.txt --burn    # one reader, explicit reveal, 15-minute viewing window
 pbin delete <paste-id>
 pbin auth logout
 ```
 
 Successful `create` prints only the paste URL on stdout. Config directory defaults to the OS config path; override with `PBIN_CONFIG_DIR`.
+
+## Burn after read and previews
+
+Enable **Burn after read** in the browser's Sharing settings, pass `--burn` to
+`pbin create`, or send `"burn_after_read": true` in the single-file API payload or
+bundle metadata. It can be combined with a password. Opening the shared link or
+reading metadata does not consume it: the recipient must click **Reveal paste**.
+Exactly one browser gets up to 15 minutes to read, refresh, browse files, and
+download the ZIP. Other browsers receive **410 Gone**. The paste's original
+expiry still applies. When the viewing window ends, access stops immediately;
+the periodic cleanup erases the stored file bodies.
+
+API recipients can get a reveal CSRF token from the `X-CSRF-Token` header of
+`GET /api/v1/pastes/{id}/meta`, retain its cookies, then send the token as
+`X-CSRF-Token` with `POST /api/v1/pastes/{id}/reveal`. A personal access token with
+`paste:read` also authorizes that POST. Password-protected pastes first require
+`POST /p/{id}/unlock`. Keep the reveal response's cookie for all file and ZIP
+requests; a token or password alone cannot access a consumed paste.
+
+The viewer's **Code / Preview** controls render Markdown (`.md`, `.markdown`)
+and HTML (`.html`, `.htm`). Markdown includes tables and task lists. Previews use
+sandboxed frames that block scripts, forms, and external resources. Raw links,
+copying, and ZIP downloads preserve the original source. Other text formats use
+the existing syntax-highlighted code view.
 
 ## Releasing the CLI
 
@@ -112,6 +137,18 @@ go run ./cmd/pastebin
 ```
 
 HTTP tests boot the app against a temporary SQLite database via `internal/apptest`.
+
+Run the real browser flows against a fresh temporary database:
+
+```bash
+npm ci
+npm run build:css
+npx playwright install --with-deps chromium
+npm run test:e2e
+```
+
+The release workflow runs both the browser E2E tests and the Go suite before
+publishing downloads. See [v0.1.1](docs/v0.1.1.md) for the feature contract.
 
 The UI uses Tailwind CSS with Go-rendered HTML and a small progressive JavaScript file. It starts in dark mode; the header toggle remembers your light/dark preference in the browser. The file viewer fills the window, with independently scrolling files and code, larger text, and a fullscreen control where the browser supports it. Chroma highlights its full language catalog with matching light/dark styles; use the syntax selector to override detection for ambiguous filenames. Unknown formats remain readable as plain text.
 
@@ -147,4 +184,5 @@ Docker builds compile the stylesheet automatically in a separate Node build stag
 - Go + SQLite, single process, Docker Compose
 - Auth required to create; nested folder = one unlisted URL
 - Folder upload via API + `pbin` CLI (browser directory upload is out of scope for MVP)
-- Password + expiry; burn-after-read and anonymous create are out of scope for MVP
+- Password + expiry; burn-after-read and previews added in v0.1.1
+- Anonymous create remains out of scope

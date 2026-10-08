@@ -71,6 +71,7 @@ func New(cfg config.Config) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/pastes/bundle", s.handleAPICreatePasteBundle)
 	mux.HandleFunc("DELETE /api/v1/pastes/{id}", s.handleAPIDeletePaste)
 	mux.HandleFunc("GET /api/v1/pastes/{id}/meta", s.handleAPIPasteMeta)
+	mux.HandleFunc("POST /api/v1/pastes/{id}/reveal", s.handlePasteReveal)
 	mux.HandleFunc("GET /api/v1/pastes/{id}/files/{file_id}/raw", s.handleAPIPasteFileRaw)
 	mux.HandleFunc("GET /api/v1/pastes/{id}/files/{file_id}", s.handleAPIPasteFile)
 	mux.HandleFunc("GET /api/v1/pastes/{id}/archive.zip", s.handleAPIPasteArchive)
@@ -85,6 +86,7 @@ func New(cfg config.Config) (*Server, error) {
 	mux.HandleFunc("GET /p/{id}/raw", s.handlePasteRaw)
 	mux.HandleFunc("GET /p/{id}/archive.zip", s.handlePasteArchive)
 	mux.HandleFunc("POST /p/{id}/unlock", s.handlePasteUnlock)
+	mux.HandleFunc("POST /p/{id}/reveal", s.handlePasteReveal)
 	mux.HandleFunc("GET /p/{id}", s.handlePasteView)
 
 	s.http = &http.Server{

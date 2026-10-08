@@ -16,6 +16,7 @@ type Config struct {
 	DataDir         string
 	SessionSecret   string
 	PasteAccessTTL  time.Duration // zero means default (1 hour); never exceeds 1 hour
+	BurnLeaseTTL    time.Duration // zero means default (15 minutes); never exceeds 15 minutes
 	CleanupInterval time.Duration // zero means default (5 minutes); negative disables
 }
 

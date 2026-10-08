@@ -180,6 +180,9 @@
   .code-toolbar .viewer-actions { @apply gap-1 sm:gap-2; }
   .code-toolbar .button { @apply min-h-9 px-2 py-1.5 text-xs sm:px-3; }
   .code-pane { @apply min-h-0 flex-1 overflow-auto bg-code; }
+  .viewer-modes { @apply flex items-center gap-1 rounded-lg border border-line p-0.5; }
+  .viewer-modes a[aria-current="page"] { @apply bg-selected text-positive; }
+  .file-preview { @apply block h-full min-h-64 w-full border-0 bg-white; }
   .code-pane .chroma { @apply m-0 min-h-full min-w-full bg-code px-0 py-5 text-sm leading-7 sm:text-[15px]; tab-size: 2; }
   .chroma .line { display: flex; }
   .chroma .ln { @apply mr-5 inline-block w-12 shrink-0 select-none border-r border-line pr-4 text-right text-line-number; }

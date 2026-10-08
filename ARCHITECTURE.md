@@ -40,6 +40,7 @@ Frozen MVP stack choices for this pastebin. Product behavior lives in `.scratch/
 - Tailwind CSS compiled at build time, served locally and embedded with the shared JavaScript in the Go binary
 - Shared navigation and page styles; native expandable folders, regular file links, and a compact mobile picker
 - Dark mode by default, with a persistent browser theme toggle; viewport-filling file viewer and native browser fullscreen
+- v0.1.1: server-rendered Goldmark Markdown and HTML previews in sandboxed frames with restrictive resource policies
 - No SPA framework requirement
 
 ## CLI packaging
@@ -60,5 +61,5 @@ Frozen MVP stack choices for this pastebin. Product behavior lives in `.scratch/
 
 - No PostgreSQL, Redis, S3/MinIO, or background-job broker
 - No anonymous paste creation
-- No burn-after-read
+- Burn-after-read was excluded from MVP; v0.1.1 adds explicit reveal POSTs and atomic, single-consumer SQLite leases, limited to 15 minutes
 - No web directory upload (CLI + API bundle are canonical for trees)

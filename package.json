@@ -3,9 +3,11 @@
   "private": true,
   "scripts": {
     "build:css": "tailwindcss -i internal/app/assets/source.css -o internal/app/assets/app.css --minify",
+    "test:e2e": "playwright test",
     "watch:css": "tailwindcss -i internal/app/assets/source.css -o internal/app/assets/app.css --watch"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@tailwindcss/cli": "4.3.0",
     "tailwindcss": "4.3.0"
   }

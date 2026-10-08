@@ -144,6 +144,17 @@ CREATE INDEX api_tokens_user_id_idx ON api_tokens(user_id);
 CREATE INDEX api_tokens_token_hash_idx ON api_tokens(token_hash);
 `,
 	},
+	{
+		Version: 8,
+		Name:    "burn_sessions",
+		SQL: `
+CREATE TABLE burn_sessions (
+	paste_id INTEGER PRIMARY KEY REFERENCES pastes(id) ON DELETE CASCADE,
+	token_hash TEXT NOT NULL UNIQUE,
+	expires_at TEXT NOT NULL
+);
+`,
+	},
 }
 
 // Migrate applies all pending migrations in order. Safe to call repeatedly.

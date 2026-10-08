@@ -13,9 +13,10 @@ import (
 )
 
 type bundleMetadata struct {
-	Title     string `json:"title"`
-	ExpiresIn string `json:"expires_in"`
-	Password  string `json:"password"`
+	Title         string `json:"title"`
+	ExpiresIn     string `json:"expires_in"`
+	Password      string `json:"password"`
+	BurnAfterRead bool   `json:"burn_after_read"`
 }
 
 type bundleManifestEntry struct {
@@ -162,7 +163,7 @@ func (s *Server) handleAPICreatePasteBundle(w http.ResponseWriter, r *http.Reque
 		ttl = parsed
 	}
 
-	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(meta.Title), meta.Password, ttl, files)
+	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(meta.Title), meta.Password, ttl, files, meta.BurnAfterRead)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -180,7 +181,7 @@ func (s *Server) handleAPICreatePasteBundle(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (s *Server) insertPasteFiles(r *http.Request, ownerID int64, title, password string, ttl time.Duration, files []pasteFileInput) (string, error) {
+func (s *Server) insertPasteFiles(r *http.Request, ownerID int64, title, password string, ttl time.Duration, files []pasteFileInput, burnAfterRead bool) (string, error) {
 	if len(files) == 0 {
 		return "", errString("no files")
 	}
@@ -210,9 +211,9 @@ func (s *Server) insertPasteFiles(r *http.Request, ownerID int64, title, passwor
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.ExecContext(r.Context(), `
-INSERT INTO pastes (public_id, owner_user_id, title, protection_mode, password_hash, expires_at, total_files, total_bytes)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		publicID, ownerID, nullIfEmpty(title), protectionMode, passwordHash, expiresAt.Format(time.RFC3339Nano), len(files), totalBytes,
+INSERT INTO pastes (public_id, owner_user_id, title, protection_mode, password_hash, expires_at, total_files, total_bytes, burn_after_read)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		publicID, ownerID, nullIfEmpty(title), protectionMode, passwordHash, expiresAt.Format(time.RFC3339Nano), len(files), totalBytes, burnAfterRead,
 	)
 	if err != nil {
 		return "", err

@@ -40,6 +40,17 @@ func (s *Server) runCleanupLoop(ctx context.Context) {
 func (s *Server) runCleanup(ctx context.Context) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
+	// Keep the consumed paste as a tombstone (410), but erase its file bodies.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM paste_files WHERE paste_id IN (
+SELECT p.id FROM pastes p LEFT JOIN burn_sessions b ON b.paste_id = p.id
+WHERE p.burned_at IS NOT NULL AND (b.expires_at IS NULL OR julianday(b.expires_at) <= julianday(?))
+)`, now); err != nil {
+		slog.Error("cleanup burned paste files", "err", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM burn_sessions WHERE julianday(expires_at) <= julianday(?)`, now); err != nil {
+		slog.Error("cleanup burn sessions", "err", err)
+	}
+
 	pastes, err := s.db.ExecContext(ctx, `DELETE FROM pastes WHERE expires_at < ?`, now)
 	if err != nil {
 		slog.Error("cleanup pastes", "err", err)

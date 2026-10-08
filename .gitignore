@@ -11,6 +11,8 @@ coverage.html
 # Go
 vendor/
 node_modules/
+/test-results/
+/playwright-report/
 
 # IDE / OS
 .idea/

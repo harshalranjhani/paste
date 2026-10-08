@@ -1,10 +1,17 @@
 (() => {
   document.documentElement.classList.add('js');
+  function syncPreviewTheme() {
+    const frame = document.querySelector('iframe[data-preview-kind="markdown"]');
+    if (!frame) return;
+    const documentHTML = frame.srcdoc.replace(/<html data-theme="(?:light|dark)">/, '<html data-theme="' + document.documentElement.dataset.theme + '">');
+    if (frame.srcdoc !== documentHTML) frame.srcdoc = documentHTML;
+  }
   const themeToggle = document.getElementById('theme-toggle');
   function updateThemeToggle() {
     const label = document.documentElement.dataset.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
     themeToggle.setAttribute('aria-label', label);
     themeToggle.title = label;
+    syncPreviewTheme();
   }
   themeToggle.addEventListener('click', () => {
     const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
@@ -132,13 +139,16 @@
     const codeMain = document.querySelector('.code-main');
     const syntaxForm = document.getElementById('syntax-form');
     const syntax = document.getElementById('syntax-language');
+    const viewCode = document.getElementById('view-code');
+    const viewPreview = document.getElementById('view-preview');
     let controller;
     let requestNumber = 0;
-    async function openFile(link, pushHistory = true, language = '') {
+    async function openFile(link, pushHistory = true, language = '', mode = codeMain.dataset.viewMode) {
       const url = new URL(link ? link.href : location.href);
       url.searchParams.delete('partial');
       if (language) url.searchParams.set('language', language);
       else url.searchParams.delete('language');
+      url.searchParams.set('view', mode);
       const partialURL = new URL(url);
       partialURL.searchParams.set('partial', '1');
       controller?.abort();
@@ -148,13 +158,14 @@
       document.getElementById('copy-contents').disabled = true;
       try {
         const response = await fetch(partialURL, { credentials: 'same-origin', signal: controller.signal });
-        if (response.status === 401) { location.assign(url); return; }
+        if (response.status === 401 || response.status === 403 || response.status === 410) { location.assign(url); return; }
         if (!response.ok) throw new Error('File unavailable');
         const code = await response.text();
         if (number !== requestNumber) return;
         pane.innerHTML = code;
         pane.scrollTop = 0;
         pane.scrollLeft = 0;
+        syncPreviewTheme();
         if (link) {
           links.forEach(item => {
             const selected = item === link;
@@ -174,10 +185,23 @@
         }
         syntax.value = response.headers.get('X-Syntax-Language') || '';
         codeMain.dataset.language = syntax.value;
+        mode = response.headers.get('X-Viewer-Mode') || 'code';
+        codeMain.dataset.viewMode = mode;
+        url.searchParams.set('view', mode);
+        viewPreview.hidden = !response.headers.get('X-File-Preview');
+        document.getElementById('wrap-lines').hidden = mode === 'preview';
+        syntaxForm.hidden = mode === 'preview';
+        for (const [control, value] of [[viewCode, 'code'], [viewPreview, 'preview']]) {
+          const target = new URL(url);
+          target.searchParams.set('view', value);
+          control.href = target;
+          if (value === mode) control.setAttribute('aria-current', 'page');
+          else control.removeAttribute('aria-current');
+        }
         if (pushHistory) history.pushState({}, '', url);
       } catch (error) {
         if (error.name !== 'AbortError' && number === requestNumber) {
-          if (picker) picker.value = links.find(item => item.getAttribute('aria-current') === 'page').getAttribute('href');
+          if (picker) picker.value = links.find(item => item.getAttribute('aria-current') === 'page')?.getAttribute('href') || '';
           syntax.value = codeMain.dataset.language;
           notify('Could not load this file. Open the file link again to retry.');
         }
@@ -197,6 +221,14 @@
       const link = links.find(item => item.getAttribute('href') === picker.value);
       if (link) openFile(link);
     });
+    for (const [control, mode] of [[viewCode, 'code'], [viewPreview, 'preview']]) {
+      control.addEventListener('click', event => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        const link = links.find(item => item.getAttribute('aria-current') === 'page');
+        openFile(link, true, syntax.value, mode);
+      });
+    }
     syntax.addEventListener('change', () => syntaxForm.requestSubmit());
     syntaxForm.addEventListener('submit', event => {
       event.preventDefault();
@@ -207,7 +239,7 @@
       const params = new URL(location.href).searchParams;
       const id = params.get('file_id') || codeMain.dataset.initialFile;
       const link = links.find(item => item.dataset.fileId === id);
-      if (link || !tree) openFile(link, false, params.get('language') || '');
+      if (link || !tree) openFile(link, false, params.get('language') || '', params.get('view') || 'code');
     });
     if (!tree) return;
 

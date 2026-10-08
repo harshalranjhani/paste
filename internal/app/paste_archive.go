@@ -25,8 +25,7 @@ func (s *Server) servePasteArchive(w http.ResponseWriter, r *http.Request, publi
 	if !ok {
 		return
 	}
-	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
-		writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
+	if !s.requirePasteContent(w, r, paste) {
 		return
 	}
 

@@ -19,6 +19,42 @@ import (
 
 var pbinBin string
 
+func TestCreateBurnFlagWorksForStdinFileAndDirectory(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	owner := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, owner, map[string]any{"name": "burn-cli", "scopes": []string{"paste:create", "paste:read"}})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+	root := t.TempDir()
+	file := filepath.Join(root, "secret.txt")
+	mustWriteFile(t, file, "cli-burn-secret")
+	for _, tc := range []struct {
+		name, stdin string
+		args        []string
+	}{
+		{"stdin", "cli-burn-secret", []string{"create", "--burn"}},
+		{"file", "", []string{"create", file, "--burn"}},
+		{"directory", "y\n", []string{"create", root, "--burn"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, code := runPbin(t, configDir, tc.stdin, tc.args...)
+			if code != 0 {
+				t.Fatalf("create --burn: code=%d stderr=%q", code, stderr)
+			}
+			id := pasteIDFromURL(t, strings.TrimSpace(stdout))
+			res, err := h.GET("/p/" + id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := readBody(t, res)
+			if !strings.Contains(body, "Reveal paste") || strings.Contains(body, "cli-burn-secret") {
+				t.Fatal("CLI burn must require reveal")
+			}
+		})
+	}
+}
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "pbin-bin-*")
 	if err != nil {

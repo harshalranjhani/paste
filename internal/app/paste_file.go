@@ -16,8 +16,7 @@ func (s *Server) handleAPIPasteFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
-		writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
+	if !s.requirePasteContent(w, r, paste) {
 		return
 	}
 	fileID, err := strconv.ParseInt(r.PathValue("file_id"), 10, 64)
@@ -48,8 +47,7 @@ func (s *Server) handleAPIPasteFileRaw(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
-		writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
+	if !s.requirePasteContent(w, r, paste) {
 		return
 	}
 	fileID, err := strconv.ParseInt(r.PathValue("file_id"), 10, 64)

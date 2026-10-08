@@ -8,16 +8,14 @@ import (
 	"github.com/harshalranjhani/paste/internal/apptest"
 )
 
-func TestOutOfScopeBurnAndAnonymousAndWebDirectoryRemainAbsent(t *testing.T) {
+func TestAnonymousAndWebDirectoryRemainAbsent(t *testing.T) {
 	h := apptest.Start(t)
 	mustSetup(t, h, "admin", "correct-horse-battery-staple")
 	jar := mustLogin(t, h, "admin", "correct-horse-battery-staple")
 
 	for _, path := range []string{
 		"/api/v1/pastes/someid/burn",
-		"/api/v1/pastes/someid/reveal",
 		"/p/someid/burn",
-		"/p/someid/reveal",
 	} {
 		res, err := h.GET(path)
 		if err != nil {
