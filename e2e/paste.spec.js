@@ -24,6 +24,38 @@ async function addFiles(page, files) {
   }
 }
 
+test('slug choices create usable links and duplicate custom names preserve the original paste', async ({ page, context }, testInfo) => {
+  await login(page);
+  for (const choice of ['short', 'long', 'custom']) {
+    await addFiles(page, [{ path: 'README.md', content: '# Slug preview\n\nOriginal contents.' }]);
+    const selector = page.getByRole('combobox', { name: 'Random slug', exact: true });
+    await expect(selector).toHaveValue('long');
+    await selector.selectOption(choice === 'custom' ? 'short' : choice);
+    if (choice === 'custom') await page.getByLabel('Custom slug', { exact: false }).fill('browser-notes_2026');
+    await page.getByRole('button', { name: 'Create paste' }).click();
+    const id = new URL(page.url()).pathname.split('/').pop();
+    if (choice === 'custom') expect(id).toBe('browser-notes_2026');
+    else expect(id).toMatch(choice === 'short' ? /^[A-Za-z0-9]{8}$/ : /^[A-Za-z0-9]{9,22}$/);
+    await page.getByRole('link', { name: 'Preview', exact: true }).click();
+    await expect(page.frameLocator('iframe').getByRole('heading', { name: 'Slug preview' })).toBeVisible();
+    // Native form submissions use CRLF for textarea line endings.
+    expect(await (await context.request.get(`/p/${id}/raw`)).text()).toBe('# Slug preview\r\n\r\nOriginal contents.');
+    const download = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Download ZIP' }).click();
+    expect((await download).suggestedFilename()).toBe(`${id}.zip`);
+  }
+  await addFiles(page, [{ path: 'replacement.txt', content: 'Replacement contents.' }]);
+  await page.getByLabel('Custom slug', { exact: false }).fill('../unsafe');
+  await page.getByRole('button', { name: 'Create paste' }).click();
+  await expect(page).toHaveURL('/new');
+  expect(await page.getByLabel('Custom slug', { exact: false }).evaluate(input => input.validity.patternMismatch)).toBe(true);
+  await page.getByLabel('Custom slug', { exact: false }).fill('browser-notes_2026');
+  await page.screenshot({ path: testInfo.outputPath('slug-sharing-settings.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Create paste' }).click();
+  await expect(page.getByRole('alert')).toContainText('already in use');
+  expect(await (await context.request.get('/p/browser-notes_2026/raw')).text()).toBe('# Slug preview\r\n\r\nOriginal contents.');
+});
+
 test('previews preserve file navigation, history, themes, mobile selection and source access', async ({ page, context }, testInfo) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -35,7 +67,9 @@ test('previews preserve file navigation, history, themes, mobile selection and s
     { path: 'index.html', content: '<h1>HTML preview</h1><script>window.previewScriptRan=true;parent.document.body.dataset.hacked="yes"</script><img src="https://example.com/tracker"><form action="/logout" method="post"><button>Submit unsafe form</button></form>' },
     { path: 'notes.txt', content: 'plain-file-source' },
   ]);
+  await page.getByRole('combobox', { name: 'Random slug', exact: true }).selectOption('short');
   await page.getByRole('button', { name: 'Create paste' }).click();
+  expect(new URL(page.url()).pathname.split('/').pop()).toMatch(/^[A-Za-z0-9]{8}$/);
   await expect(page.locator('#selected-path')).toHaveText('README.md');
   await page.getByRole('link', { name: 'Preview', exact: true }).click();
   const frame = page.frameLocator('iframe.file-preview');
@@ -87,10 +121,12 @@ test('password burn sharing requires reveal and only the winning browser can bro
     { path: 'secret.html', content: '<h1>Private HTML</h1>' },
   ]);
   await page.getByLabel('Burn after read', { exact: true }).check();
+  await page.getByLabel('Custom slug', { exact: false }).fill('burn-with-custom-slug');
   await page.getByLabel('Password', { exact: false }).fill('burn-password');
   await page.getByRole('button', { name: 'Create paste' }).click();
   const pasteURL = page.url();
   const id = new URL(pasteURL).pathname.split('/').pop();
+  expect(id).toBe('burn-with-custom-slug');
   const firstContext = await browser.newContext({ baseURL: new URL(pasteURL).origin });
   const secondContext = await browser.newContext({ baseURL: new URL(pasteURL).origin });
   try {

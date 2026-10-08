@@ -88,11 +88,31 @@ pbin auth status
 pbin create ./path/to/file.go
 pbin create ./path/to/directory   # multi-file tree via bundle API
 pbin create secret.txt --burn    # one reader, explicit reveal, 15-minute viewing window
+pbin create notes.md --slug meeting-notes
+pbin create ./src --slug-length short
 pbin delete <paste-id>
 pbin auth logout
 ```
 
 Successful `create` prints only the paste URL on stdout. Config directory defaults to the OS config path; override with `PBIN_CONFIG_DIR`.
+
+## Paste slugs
+
+The browser's Sharing settings let you choose **Long random** (the default),
+**Short random** (8 characters), or enter an optional **Custom slug**. Long random
+slugs keep the existing 128-bit random IDs, usually 22 base62 characters. Short
+random slugs use 8 random letters and numbers. A custom slug overrides the random
+choice and becomes the exact, case-sensitive name in `/p/{slug}`.
+
+Custom slugs must be 1–64 ASCII letters, numbers, hyphens or underscores, starting
+with a letter or number. An existing slug cannot be overwritten: creation returns
+**409 Conflict** with `slug_taken`. Invalid names return **400 Bad Request** with
+`invalid_slug`; invalid random length choices return `invalid_slug_length`.
+
+Use `pbin create --slug meeting-notes` or `--slug-length short|long` with stdin,
+a file, or a directory. For `POST /api/v1/pastes`, send `"slug": "meeting-notes"`
+or `"slug_length": "short"` in the JSON body. The bundle API accepts the same
+fields in its metadata. Omitting both fields keeps the long random default.
 
 ## Burn after read and previews
 

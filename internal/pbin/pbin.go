@@ -237,6 +237,8 @@ func readLine(r io.Reader) (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
+type createSlugOptions struct{ slug, length string }
+
 func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	name := ""
 	expires := ""
@@ -244,6 +246,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 	passwordPrompt := false
 	passwordStdin := false
 	burnAfterRead := false
+	var slug createSlugOptions
 	var pathArg string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -269,6 +272,18 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 			passwordStdin = true
 		case "--burn":
 			burnAfterRead = true
+		case "--slug", "--slug-length":
+			flag := args[i]
+			if i+1 >= len(args) {
+				fmt.Fprintf(stderr, "%s requires a value\n", flag)
+				return 2
+			}
+			i++
+			if flag == "--slug" {
+				slug.slug = args[i]
+			} else {
+				slug.length = args[i]
+			}
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				fmt.Fprintf(stderr, "unknown flag: %s\n", args[i])
@@ -303,7 +318,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 			if code != 0 {
 				return code
 			}
-			return createFromDirectory(cfg, pathArg, name, expires, password, burnAfterRead, jsonOut, stdin, stdout, stderr)
+			return createFromDirectory(cfg, pathArg, name, expires, password, burnAfterRead, jsonOut, slug, stdin, stdout, stderr)
 		}
 		content, err := os.ReadFile(pathArg)
 		if err != nil {
@@ -318,7 +333,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 		if code != 0 {
 			return code
 		}
-		return createSingleFile(cfg, filename, content, expires, password, burnAfterRead, jsonOut, stdout, stderr)
+		return createSingleFile(cfg, filename, content, expires, password, burnAfterRead, jsonOut, slug, stdout, stderr)
 	}
 
 	if passwordStdin {
@@ -338,7 +353,7 @@ func runCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv 
 	if code != 0 {
 		return code
 	}
-	return createSingleFile(cfg, filename, content, expires, password, burnAfterRead, jsonOut, stdout, stderr)
+	return createSingleFile(cfg, filename, content, expires, password, burnAfterRead, jsonOut, slug, stdout, stderr)
 }
 
 func readCreatePassword(prompt, fromStdin bool, stdin io.Reader, stderr io.Writer) (string, int) {
@@ -378,11 +393,13 @@ type uploadFile struct {
 	Content []byte
 }
 
-func createSingleFile(cfg fileConfig, filename string, content []byte, expires, password string, burnAfterRead, jsonOut bool, stdout, stderr io.Writer) int {
+func createSingleFile(cfg fileConfig, filename string, content []byte, expires, password string, burnAfterRead, jsonOut bool, slug createSlugOptions, stdout, stderr io.Writer) int {
 	payload := map[string]any{
 		"filename":        filename,
 		"content":         string(content),
 		"burn_after_read": burnAfterRead,
+		"slug":            slug.slug,
+		"slug_length":     slug.length,
 	}
 	if expires != "" {
 		payload["expires_in"] = expires
@@ -412,7 +429,7 @@ func createSingleFile(cfg fileConfig, filename string, content []byte, expires, 
 	return writeCreateResponse(res, cfg, filename, len(content), jsonOut, stdout, stderr)
 }
 
-func createFromDirectory(cfg fileConfig, root, title, expires, password string, burnAfterRead, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) int {
+func createFromDirectory(cfg fileConfig, root, title, expires, password string, burnAfterRead, jsonOut bool, slug createSlugOptions, stdin io.Reader, stdout, stderr io.Writer) int {
 	files, err := collectDirectoryFiles(root)
 	if err != nil {
 		fmt.Fprintf(stderr, "scan directory: %v\n", err)
@@ -456,7 +473,7 @@ func createFromDirectory(cfg fileConfig, root, title, expires, password string, 
 		fmt.Fprintln(stderr, "aborted")
 		return 1
 	}
-	return uploadBundle(cfg, title, expires, password, files, burnAfterRead, jsonOut, stdout, stderr)
+	return uploadBundle(cfg, title, expires, password, files, burnAfterRead, jsonOut, slug, stdout, stderr)
 }
 
 func sensitivePathWarnings(files []uploadFile) []string {
@@ -638,11 +655,11 @@ func hasPathPrefix(rel, prefix string) bool {
 	return rel == prefix || strings.HasPrefix(rel, prefix+"/")
 }
 
-func uploadBundle(cfg fileConfig, title, expires, password string, files []uploadFile, burnAfterRead, jsonOut bool, stdout, stderr io.Writer) int {
+func uploadBundle(cfg fileConfig, title, expires, password string, files []uploadFile, burnAfterRead, jsonOut bool, slug createSlugOptions, stdout, stderr io.Writer) int {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
-	meta := map[string]any{"burn_after_read": burnAfterRead}
+	meta := map[string]any{"burn_after_read": burnAfterRead, "slug": slug.slug, "slug_length": slug.length}
 	if title != "" {
 		meta["title"] = title
 	}

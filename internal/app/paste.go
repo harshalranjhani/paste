@@ -26,6 +26,7 @@ const (
 )
 
 type createPasteRequest struct {
+	pasteSlugOptions
 	Filename      string `json:"filename"`
 	Content       string `json:"content"`
 	Title         string `json:"title"`
@@ -96,9 +97,9 @@ func (s *Server) handleAPICreatePaste(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(req.Title)
 	size := len(req.Content)
 
-	publicID, err := s.insertPaste(r, sess.UserID, filename, req.Content, title, req.Password, ttl, req.BurnAfterRead)
+	publicID, err := s.insertPaste(r, sess.UserID, filename, req.Content, title, req.Password, ttl, req.BurnAfterRead, req.pasteSlugOptions)
 	if err != nil {
-		writeUIError(w, r, "internal error", http.StatusInternalServerError)
+		writePasteCreateError(w, r, err)
 		return
 	}
 
@@ -183,6 +184,9 @@ func (s *Server) handleNewPasteForm(w http.ResponseWriter, r *http.Request) {
 </div><aside class="card editor-settings"><div class="card-header"><h2>Sharing settings</h2></div><div class="card-body stack">
 <div><span class="badge badge-green">`+icon("lock")+`Unlisted</span><p class="muted mt-3">Anyone with the link can view. Your paste won’t appear in a public list or search engine.</p></div>
 <label>Expires in<select name="expires_in"><option value="90d" selected>90 days</option><option value="30d">30 days</option><option value="7d">7 days</option><option value="1d">1 day</option></select></label>
+<label>Random slug<select name="slug_length"><option value="long" selected>Long random (default)</option><option value="short">Short random (8 characters)</option></select></label>
+<label>Custom slug <span class="muted">Optional. Overrides the random slug choice.</span><input name="slug" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}" placeholder="e.g. meeting-notes" autocomplete="off" aria-describedby="slug-help"></label>
+<p class="muted" id="slug-help">1–64 letters, numbers, hyphens or underscores. Start with a letter or number. Custom names are case-sensitive.</p>
 <label>Password <span class="muted">Optional. Require a password to view.</span><input type="password" name="password" autocomplete="new-password" placeholder="Add a password"></label>
 <div><label class="checkbox-label"><input type="checkbox" name="burn_after_read">Burn after read</label><p class="muted mt-2">One reader can reveal the paste, then browse its files for up to 15 minutes. Opening the link won’t consume it.</p></div>
 <button class="button button-primary" type="submit">Create paste `+icon("arrow")+`</button><p class="muted">Pastes are read only after creation. Double-check your files before sharing.</p>
@@ -289,18 +293,18 @@ func (s *Server) handleNewPasteCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		ttl = parsed
 	}
-	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(r.FormValue("title")), password, ttl, files, r.FormValue("burn_after_read") == "on")
+	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(r.FormValue("title")), password, ttl, files, r.FormValue("burn_after_read") == "on", pasteSlugOptions{Slug: r.FormValue("slug"), SlugLength: r.FormValue("slug_length")})
 	if err != nil {
-		writeUIError(w, r, "internal error", http.StatusInternalServerError)
+		writePasteCreateError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/p/"+publicID, http.StatusSeeOther)
 }
 
-func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, title, password string, ttl time.Duration, burnAfterRead bool) (string, error) {
+func (s *Server) insertPaste(r *http.Request, ownerID int64, filename, content, title, password string, ttl time.Duration, burnAfterRead bool, slug pasteSlugOptions) (string, error) {
 	return s.insertPasteFiles(r, ownerID, title, password, ttl, []pasteFileInput{
 		{Path: filename, Content: content},
-	}, burnAfterRead)
+	}, burnAfterRead, slug)
 }
 
 func (s *Server) handlePasteView(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +402,7 @@ func (s *Server) handleAPIPasteMeta(w http.ResponseWriter, r *http.Request) {
 	unlocked := (!passwordRequired || paste.BurnedAt.Valid || s.hasPasteAccess(r, paste.ID)) && !revealRequired
 	if revealRequired {
 		if _, err := s.burnCSRFToken(w, r); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 			return
 		}
 	}
@@ -479,7 +483,7 @@ func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 	if publicID == "" {
-		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
+		writePasteError(w, r, http.StatusNotFound, "not_found", "Paste not found.")
 		return nil, false
 	}
 	var paste pasteRow
@@ -488,22 +492,22 @@ func (s *Server) loadPasteMeta(w http.ResponseWriter, r *http.Request, publicID 
 		publicID,
 	).Scan(&paste.ID, &paste.PublicID, &paste.ExpiresAt, &paste.ProtectionMode, &paste.PasswordHash, &paste.Title, &paste.BurnAfterRead, &paste.BurnedAt)
 	if err == sql.ErrNoRows {
-		writeUIError(w, r, "Paste not found.", http.StatusNotFound)
+		writePasteError(w, r, http.StatusNotFound, "not_found", "Paste not found.")
 		return nil, false
 	}
 	if err != nil {
-		writeUIError(w, r, "internal error", http.StatusInternalServerError)
+		writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return nil, false
 	}
 	if expired, err := isExpired(paste.ExpiresAt); err != nil {
-		writeUIError(w, r, "internal error", http.StatusInternalServerError)
+		writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return nil, false
 	} else if expired {
-		writeUIError(w, r, "gone", http.StatusGone)
+		writePasteError(w, r, http.StatusGone, "gone", "gone")
 		return nil, false
 	}
 	if paste.BurnedAt.Valid && !s.hasBurnAccess(r, &paste) {
-		writeUIError(w, r, "This paste has already been revealed or its viewing time has ended.", http.StatusGone)
+		writePasteError(w, r, http.StatusGone, "gone", "This paste has already been revealed or its viewing time has ended.")
 		return nil, false
 	}
 	return &paste, true
@@ -593,6 +597,14 @@ func highlightCode(filename, content, language string) string {
 		out = `<div id="paste-content">` + out + `</div>`
 	}
 	return out
+}
+
+func writePasteError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeJSONError(w, status, code, message)
+	} else {
+		writeUIError(w, r, message, status)
+	}
 }
 
 func writeJSONError(w http.ResponseWriter, status int, code, message string) {

@@ -55,15 +55,15 @@ func (s *Server) handlePasteReveal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !paste.BurnAfterRead {
-		writeJSONError(w, http.StatusBadRequest, "not_burn_paste", "paste does not burn after reading")
+		writePasteError(w, r, http.StatusBadRequest, "not_burn_paste", "paste does not burn after reading")
 		return
 	}
 	if paste.BurnedAt.Valid {
-		writeUIError(w, r, "This paste has already been revealed.", http.StatusGone)
+		writePasteError(w, r, http.StatusGone, "gone", "This paste has already been revealed.")
 		return
 	}
 	if paste.ProtectionMode == "password" && !s.hasPasteAccess(r, paste.ID) {
-		writeJSONError(w, http.StatusUnauthorized, "password_required", "password required")
+		writePasteError(w, r, http.StatusUnauthorized, "password_required", "password required")
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
@@ -73,13 +73,13 @@ func (s *Server) handlePasteReveal(w http.ResponseWriter, r *http.Request) {
 	} else {
 		cookie, err := r.Cookie("burn_csrf")
 		if err != nil || !s.validCSRF(r, &sessionUser{CSRFToken: cookie.Value}) {
-			writeUIError(w, r, "csrf required", http.StatusForbidden)
+			writePasteError(w, r, http.StatusForbidden, "csrf_required", "csrf required")
 			return
 		}
 	}
 	token, hash, err := auth.NewSessionToken()
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 	now := time.Now().UTC()
@@ -89,25 +89,25 @@ func (s *Server) handlePasteReveal(w http.ResponseWriter, r *http.Request) {
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(r.Context(), `UPDATE pastes SET burned_at = ? WHERE id = ? AND burn_after_read = 1 AND burned_at IS NULL AND julianday(expires_at) > julianday(?)`, now.Format(time.RFC3339Nano), paste.ID, now.Format(time.RFC3339Nano))
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		writeUIError(w, r, "This paste has already been revealed or expired.", http.StatusGone)
+		writePasteError(w, r, http.StatusGone, "gone", "This paste has already been revealed or expired.")
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(), `INSERT INTO burn_sessions (paste_id, token_hash, expires_at) VALUES (?, ?, ?)`, paste.ID, hash, expiresAt.Format(time.RFC3339Nano)); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writePasteError(w, r, http.StatusInternalServerError, "internal_error", "internal error")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: burnCookieName(paste.PublicID), Value: token, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.cfg.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, Expires: expiresAt})

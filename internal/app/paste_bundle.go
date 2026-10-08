@@ -13,6 +13,7 @@ import (
 )
 
 type bundleMetadata struct {
+	pasteSlugOptions
 	Title         string `json:"title"`
 	ExpiresIn     string `json:"expires_in"`
 	Password      string `json:"password"`
@@ -163,9 +164,9 @@ func (s *Server) handleAPICreatePasteBundle(w http.ResponseWriter, r *http.Reque
 		ttl = parsed
 	}
 
-	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(meta.Title), meta.Password, ttl, files, meta.BurnAfterRead)
+	publicID, err := s.insertPasteFiles(r, sess.UserID, strings.TrimSpace(meta.Title), meta.Password, ttl, files, meta.BurnAfterRead, meta.pasteSlugOptions)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writePasteCreateError(w, r, err)
 		return
 	}
 
@@ -181,12 +182,12 @@ func (s *Server) handleAPICreatePasteBundle(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (s *Server) insertPasteFiles(r *http.Request, ownerID int64, title, password string, ttl time.Duration, files []pasteFileInput, burnAfterRead bool) (string, error) {
+func (s *Server) insertPasteFiles(r *http.Request, ownerID int64, title, password string, ttl time.Duration, files []pasteFileInput, burnAfterRead bool, slug pasteSlugOptions) (string, error) {
 	if len(files) == 0 {
 		return "", errString("no files")
 	}
 	expiresAt := time.Now().UTC().Add(ttl)
-	publicID, err := newPublicID()
+	publicID, err := slug.publicID()
 	if err != nil {
 		return "", err
 	}
@@ -210,17 +211,34 @@ func (s *Server) insertPasteFiles(r *http.Request, ownerID int64, title, passwor
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.ExecContext(r.Context(), `
+	var pasteID int64
+	for attempt := 0; attempt < 5; attempt++ {
+		res, err := tx.ExecContext(r.Context(), `
 INSERT INTO pastes (public_id, owner_user_id, title, protection_mode, password_hash, expires_at, total_files, total_bytes, burn_after_read)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		publicID, ownerID, nullIfEmpty(title), protectionMode, passwordHash, expiresAt.Format(time.RFC3339Nano), len(files), totalBytes, burnAfterRead,
-	)
-	if err != nil {
-		return "", err
-	}
-	pasteID, err := res.LastInsertId()
-	if err != nil {
-		return "", err
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(public_id) DO NOTHING`,
+			publicID, ownerID, nullIfEmpty(title), protectionMode, passwordHash, expiresAt.Format(time.RFC3339Nano), len(files), totalBytes, burnAfterRead,
+		)
+		if err != nil {
+			return "", err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return "", err
+		}
+		if n == 1 {
+			pasteID, err = res.LastInsertId()
+			if err != nil {
+				return "", err
+			}
+			break
+		}
+		if slug.Slug != "" || attempt == 4 {
+			return "", errSlugTaken
+		}
+		publicID, err = slug.publicID()
+		if err != nil {
+			return "", err
+		}
 	}
 	for _, f := range files {
 		displayName := path.Base(f.Path)

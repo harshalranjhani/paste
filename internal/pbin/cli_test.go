@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -18,6 +19,80 @@ import (
 )
 
 var pbinBin string
+
+func TestCreateSlugChoicesWorkForStdinFileAndDirectory(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	owner := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	pat := mustCreatePAT(t, h, owner, map[string]any{"name": "slug-cli", "scopes": []string{"paste:create"}})
+	configDir := t.TempDir()
+	mustLoginCLI(t, configDir, h.BaseURL, pat.Token)
+	root := t.TempDir()
+	file := filepath.Join(root, "notes.txt")
+	mustWriteFile(t, file, "cli-slug-source")
+	for _, source := range []struct {
+		name, stdin string
+		args        []string
+	}{
+		{"stdin", "cli-slug-source", []string{"create"}},
+		{"file", "", []string{"create", file}},
+		{"directory", "y\n", []string{"create", root}},
+	} {
+		for _, mode := range []string{"custom", "short", "long"} {
+			args := append([]string(nil), source.args...)
+			if mode == "custom" {
+				args = append(args, "--slug", "cli-"+source.name)
+			} else {
+				args = append(args, "--slug-length", mode)
+			}
+			stdout, stderr, code := runPbin(t, configDir, source.stdin, args...)
+			if code != 0 {
+				t.Fatalf("%s %s: code=%d stderr=%q", source.name, mode, code, stderr)
+			}
+			id := pasteIDFromURL(t, strings.TrimSpace(stdout))
+			pattern := `^[A-Za-z0-9]{9,22}$`
+			if mode == "short" {
+				pattern = `^[A-Za-z0-9]{8}$`
+			}
+			if mode == "custom" {
+				pattern = "^cli-" + source.name + "$"
+			}
+			if !regexp.MustCompile(pattern).MatchString(id) {
+				t.Fatalf("%s %s: id=%q", source.name, mode, id)
+			}
+			res, err := h.GET("/p/" + id + "/raw")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if body := readBody(t, res); body != "cli-slug-source" {
+				t.Fatalf("CLI source: %q", body)
+			}
+		}
+	}
+	for _, bad := range []struct {
+		args    []string
+		code    int
+		message string
+	}{
+		{[]string{"create", "--slug", "cli-stdin"}, 1, "slug_taken"},
+		{[]string{"create", "--slug", "../unsafe"}, 1, "invalid_slug"},
+		{[]string{"create", "--slug-length", "tiny"}, 1, "invalid_slug_length"},
+		{[]string{"create", "--slug"}, 2, "--slug requires a value"},
+		{[]string{"create", "--slug-length"}, 2, "--slug-length requires a value"},
+	} {
+		stdout, stderr, code := runPbin(t, configDir, "replacement-source", bad.args...)
+		if code != bad.code || stdout != "" || !strings.Contains(stderr, bad.message) {
+			t.Fatalf("args=%v: code=%d stdout=%q stderr=%q", bad.args, code, stdout, stderr)
+		}
+	}
+	res, err := h.GET("/p/cli-stdin/raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := readBody(t, res); body != "cli-slug-source" {
+		t.Fatalf("CLI collision overwrote paste: %q", body)
+	}
+}
 
 func TestCreateBurnFlagWorksForStdinFileAndDirectory(t *testing.T) {
 	h := apptest.Start(t)

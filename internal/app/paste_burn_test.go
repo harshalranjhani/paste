@@ -15,6 +15,46 @@ import (
 	"github.com/harshalranjhani/paste/internal/config"
 )
 
+func assertBurnAPIError(t *testing.T, res *http.Response, status int, code string) {
+	t.Helper()
+	body := readBody(t, res)
+	var payload struct {
+		Error struct{ Code, Message string } `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil || res.StatusCode != status || res.Header.Get("Content-Type") != "application/json" || payload.Error.Code != code || payload.Error.Message == "" {
+		t.Fatalf("API error: status=%d type=%q body=%q, want %d %s JSON", res.StatusCode, res.Header.Get("Content-Type"), body, status, code)
+	}
+}
+
+func TestBurnAPIErrorResponsesAreJSON(t *testing.T) {
+	h := apptest.Start(t)
+	mustSetup(t, h, "admin", "correct-horse-battery-staple")
+	owner := mustLogin(t, h, "admin", "correct-horse-battery-staple")
+	id := createdPasteID(t, postJSONJarCSRF(t, h, owner, "/api/v1/pastes", map[string]any{
+		"slug": "api-burn-errors", "content": "private-source", "burn_after_read": true,
+	}))
+	winner, loser := newJar(t), newJar(t)
+	assertBurnAPIError(t, postFormJar(t, h, winner, "/api/v1/pastes/"+id+"/reveal", url.Values{}), http.StatusForbidden, "csrf_required")
+	readBody(t, getJar(t, h, winner, "/api/v1/pastes/"+id+"/meta"))
+	res := revealBurnPaste(t, h, winner, id, "/api/v1/pastes/")
+	readBody(t, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("reveal: %d", res.StatusCode)
+	}
+	assertBurnAPIError(t, revealBurnPaste(t, h, winner, id, "/api/v1/pastes/"), http.StatusGone, "gone")
+	var metadata struct {
+		Files []struct{ ID int64 }
+	}
+	if err := json.Unmarshal([]byte(readBody(t, getJar(t, h, winner, "/api/v1/pastes/"+id+"/meta"))), &metadata); err != nil || len(metadata.Files) != 1 {
+		t.Fatalf("metadata=%+v err=%v", metadata, err)
+	}
+	file := "/files/" + strconv.FormatInt(metadata.Files[0].ID, 10)
+	for _, suffix := range []string{"/meta", "/archive.zip", file, file + "/raw"} {
+		assertBurnAPIError(t, getJar(t, h, loser, "/api/v1/pastes/"+id+suffix), http.StatusGone, "gone")
+	}
+	assertBurnAPIError(t, postFormJar(t, h, loser, "/api/v1/pastes/"+id+"/reveal", url.Values{}), http.StatusGone, "gone")
+}
+
 func TestBurnLeaseExpiresEvenAfterRefreshAndCleanup(t *testing.T) {
 	h := apptest.Start(t, func(cfg *config.Config) {
 		cfg.BurnLeaseTTL = 2 * time.Second
@@ -53,6 +93,9 @@ func TestBurnLeaseExpiresEvenAfterRefreshAndCleanup(t *testing.T) {
 		if res.StatusCode != http.StatusGone || strings.Contains(body, "expired-lease-secret") {
 			t.Fatalf("expired lease at %s: status=%d", route, res.StatusCode)
 		}
+	}
+	for _, suffix := range []string{"/meta", "/archive.zip"} {
+		assertBurnAPIError(t, getJar(t, h, reader, "/api/v1/pastes/"+id+suffix), http.StatusGone, "gone")
 	}
 	res := revealBurnPaste(t, h, reader, id, "/p/")
 	readBody(t, res)
@@ -168,7 +211,11 @@ func TestBurnConcurrentAPIRevealsHaveExactlyOneWinner(t *testing.T) {
 		if got.err != nil {
 			t.Fatal(got.err)
 		}
-		readBody(t, got.res)
+		if got.res.StatusCode == http.StatusGone {
+			assertBurnAPIError(t, got.res, http.StatusGone, "gone")
+		} else {
+			readBody(t, got.res)
+		}
 		statuses[got.res.StatusCode]++
 	}
 	if statuses[http.StatusOK] != 1 || statuses[http.StatusGone] != 1 {
